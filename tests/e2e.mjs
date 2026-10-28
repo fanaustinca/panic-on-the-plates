@@ -50,7 +50,9 @@ await T('solo: countdown, keyboard movement, grab with Enter, chop by holding En
   if (process.env.TRACE) console.log('      wait #3');
   await page.waitForFunction(() => [...document.querySelectorAll('.countdown .word')].some((w) => /Cook/.test(w.textContent)) || PANIC.game.sim.t > 0.3, { polling: 50 });
   await waitPlay(page);
-  await page.keyboard.down('KeyD'); await sleep(600); await page.keyboard.up('KeyD');
+  await page.keyboard.down('KeyD');
+  await page.waitForFunction((x0) => PANIC.game.me.x > x0 + 0.5, { polling: 50, timeout: 60000 }, before.x).catch(() => {});
+  await page.keyboard.up('KeyD');
   const after = await page.evaluate(() => ({ x: PANIC.game.me.x, y: PANIC.game.me.y }));
   assert(after.x > before.x + 0.3, `moved right ${before.x} -> ${after.x}`);
   // jump
@@ -134,8 +136,11 @@ await T('multiplayer: quick match pairs two tabs, vote, start, movement and acti
   const p0 = await A.page.evaluate((id) => { const p = PANIC.game.sim.player(id); return { x: p.x, y: p.y, outfit: p.outfit }; }, bid);
   assert(p0.outfit === 'wizard', 'host sees guest outfit');
   await B.page.bringToFront();
-  await B.page.keyboard.down('KeyA'); await sleep(700); await B.page.keyboard.up('KeyA');
-  await sleep(500);
+  await B.page.keyboard.down('KeyA');
+  await B.page.waitForFunction((x0) => PANIC.game.me.x < x0 - 0.6, { polling: 50, timeout: 60000 }, p0.x).catch(() => {});
+  await B.page.keyboard.up('KeyA');
+  // the host hears about it within a few position packets
+  await A.page.waitForFunction((id, x0) => PANIC.game.sim.player(id).x < x0 - 0.3, { polling: 100, timeout: 30000 }, bid, p0.x).catch(() => {});
   const p1 = await A.page.evaluate((id) => { const p = PANIC.game.sim.player(id); return { x: p.x, y: p.y }; }, bid);
   assert(p1.x < p0.x - 0.3, `host saw guest move ${p0.x} -> ${p1.x}`);
   // guest grabs from a crate through the host
