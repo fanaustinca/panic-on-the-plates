@@ -101,11 +101,11 @@ await T('solo: countdown, keyboard movement, grab with Enter, chop by holding En
   });
   await sleep(100);
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => PANIC.game.sim.delivered >= 1, { polling: 50, timeout: 5000 });
+  await page.waitForFunction(() => PANIC.game.sim.delivered >= 1, { polling: 100, timeout: 45000 });
+  // software GL on CI can be ~1 fps, so wait for frames rather than a fixed time
   const f0 = await page.evaluate(() => PANIC.game.frames);
-  await sleep(800);
-  const f1 = await page.evaluate(() => PANIC.game.frames);
-  assert(f1 > f0 + 5, `still rendering after a delivery (${f0} -> ${f1} frames)`);
+  const ok = await page.waitForFunction((f0) => PANIC.game.frames > f0 + 3, { polling: 100, timeout: 45000 }, f0).then(() => true, () => false);
+  assert(ok, `still rendering after a delivery (stuck at ${f0} frames)`);
   assert(!errors.length, errors.join('\n'));
   await page.close();
 });
