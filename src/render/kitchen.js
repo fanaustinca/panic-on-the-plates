@@ -568,7 +568,7 @@ export class Kitchen {
         if (P.beacon) { const on = s.dirty > 0 && Math.sin(rt * 9) > 0; P.beacon.material.emissiveIntensity = on ? 3 : 0.1; }
         if (P.strips) P.strips.forEach((st, k) => { st.rotation.x = Math.sin(rt * 2 + k) * 0.04 + (P.flap || 0) * Math.sin(rt * 20 + k) * 0.5; });
         if (P.flap) P.flap = Math.max(0, P.flap - dt * 1.5);
-        if (P.pad) P.pad.material.emissiveIntensity = 0.3 + Math.sin(rt * 3) * 0.15 + (P.ring || 0) * 2;
+        if (P.pad) P.pad.material.emissiveIntensity = 0.3 + Math.sin(rt * 3) * 0.15 + (P.pulse || 0) * 2;
         if (P.bell) { P.bellT = Math.max(0, (P.bellT || 0) - dt); P.bell.position.y = 0.1 + Math.abs(Math.sin(P.bellT * 30)) * P.bellT * 0.15; }
         if (P.lamps) P.lamps.forEach((b, k) => { b.material.emissiveIntensity = 1.5 + Math.sin(rt * 5 + k * 2) * 0.1; });
         if (P.tickets) P.tickets.forEach((tk, k) => { tk.rotation.z = (k - 1) * 0.08 + Math.sin(rt * 1.7 + k) * 0.04; tk.visible = k < sim.orders.length; });
@@ -751,7 +751,7 @@ export class Kitchen {
       case 'deliver':
         for (let k = 0; k < 26; k++) { const a = Math.random() * Math.PI * 2, v = 1 + Math.random() * 2; P.puff({ x, y: top + 0.3, z, vx: Math.cos(a) * v, vy: 1.5 + Math.random() * 2.5, vz: Math.sin(a) * v, g: 5, drag: 1, life: 1, s0: 0.08, s1: 0.03, a: 1, color: [0xffd23a, 0xff6a3a, 0x6ad8ff, 0x7aff8a][k % 4], glow: true }); }
         for (let k = 0; k < 14; k++) P.chunk({ x, y: top + 0.4, z, vx: (Math.random() - 0.5) * 3, vy: 2 + Math.random() * 2.5, vz: (Math.random() - 0.5) * 3, color: [0xffd23a, 0xff5a8a, 0x5ad1ff, 0x8aff6a][k % 4], s: 0.03, sx: 1.6, sy: 0.2, life: 1.4, floor: top });
-        if (parts) { parts.bellT = 0.5; parts.ring = 1; setTimeout(() => { parts.ring = 0; }, 400); }
+        if (parts) { parts.bellT = 0.5; parts.pulse = 1; setTimeout(() => { parts.pulse = 0; }, 400); }
         break;
       case 'chopped':
         for (let k = 0; k < 10; k++) P.puff({ x, y: top + 0.2, z, vx: (Math.random() - 0.5) * 1.5, vy: 1 + Math.random(), vz: (Math.random() - 0.5) * 1.5, g: 3, life: 0.6, s0: 0.06, s1: 0.02, a: 1, color: 0xfff2a0, glow: true });

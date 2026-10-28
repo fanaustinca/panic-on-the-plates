@@ -91,6 +91,21 @@ await T('solo: countdown, keyboard movement, grab with Enter, chop by holding En
   const hud = await page.evaluate(() => ({ tickets: document.querySelectorAll('.ticket').length, hint: document.querySelector('.hint').textContent }));
   assert(hud.tickets >= 1, 'order tickets on screen');
   await shot(page, 'e2e-solo.png');
+  // serve a finished plate at the window: the game must keep rendering afterwards (regression: froze after the first delivery)
+  await page.evaluate(() => {
+    const g = PANIC.game, L = g.L, me = g.me, o = g.sim.orders[0];
+    const rc = L.recipes[o.r];
+    me.held = { kind: 'plate', n: 1, dirty: false, c: rc.ings.map((ing) => ({ ing, s: PANIC.finalState(ing) })) };
+    const w = L.stations.find((t) => t.st === 'window');
+    for (const [dx, dy] of [[0, 1], [1, 0], [-1, 0], [0, -1]]) { const t = L.tiles[(w.y + dy) * L.W + w.x + dx]; if (t && t.k === 'floor') { me.x = w.x + dx + 0.5; me.y = w.y + dy + 0.5; me.fx = -dx; me.fy = -dy; break; } }
+  });
+  await sleep(100);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => PANIC.game.sim.delivered >= 1, { polling: 50, timeout: 5000 });
+  const f0 = await page.evaluate(() => PANIC.game.frames);
+  await sleep(800);
+  const f1 = await page.evaluate(() => PANIC.game.frames);
+  assert(f1 > f0 + 5, `still rendering after a delivery (${f0} -> ${f1} frames)`);
   assert(!errors.length, errors.join('\n'));
   await page.close();
 });

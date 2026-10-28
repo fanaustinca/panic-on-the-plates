@@ -1,7 +1,7 @@
 // App controller: renderer + main loop, menus, lobby membership/voting over the Room, and matches.
 import * as THREE from 'three';
 import './style.css';
-import { WORLDS, MAX_PLAYERS, OUTFITS, cleanUpg } from './config.js';
+import { WORLDS, MAX_PLAYERS, OUTFITS, cleanUpg, finalState } from './config.js';
 import { MP_LEVEL } from './levels.js';
 import { Room, isLocalNet } from './net.js';
 import { Game } from './game.js';
@@ -42,8 +42,9 @@ class App {
     const loop = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      this.frame(dt);
+      // schedule first: one bad frame must never freeze the game
       requestAnimationFrame(loop);
+      try { this.frame(dt); } catch (e) { if (!this.frameErr) { this.frameErr = true; console.error(e); } }
     };
     requestAnimationFrame(loop);
     // a hidden host tab gets no rAF; keep the kitchen running for everybody else
@@ -356,4 +357,4 @@ class App {
 
 const app = new App();
 // test / debug hooks
-window.PANIC = { app, ready: true, local: isLocalNet(), game: null };
+window.PANIC = { app, ready: true, local: isLocalNet(), game: null, finalState };

@@ -238,6 +238,7 @@ export class Game {
 
   render(dt, rt, t) {
     const sim = this.sim;
+    this.frames = (this.frames || 0) + 1;
     this.kitchen.update(sim, t, dt, this.camera, rt);
     const now = performance.now();
     for (const p of sim.players) {
