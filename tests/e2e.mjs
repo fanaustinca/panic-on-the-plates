@@ -116,30 +116,40 @@ await T('multiplayer: quick match pairs two tabs, vote, start, movement and acti
   const A = await openPage(browser, base);
   const B = await openPage(browser, base);
   await A.page.evaluate(() => { PANIC.app.save.name = 'Host'; PANIC.app.quickMatch(); });
+  console.log('      mp step 1');
   await A.page.waitForSelector('.lobby', { timeout: 90000 });
   assert(await A.page.evaluate(() => PANIC.app.isHost), 'A hosts when no rooms are open');
   await B.page.bringToFront();
   await B.page.evaluate(() => { PANIC.app.save.name = 'Guest'; PANIC.app.save.outfit = 'wizard'; PANIC.app.quickMatch(); });
+  console.log('      mp step 2');
   await B.page.waitForSelector('.lobby', { timeout: 90000 });
   assert(!(await B.page.evaluate(() => PANIC.app.isHost)), 'B joined as client');
+  console.log('      mp step 3');
   await A.page.waitForFunction(() => PANIC.app.members.size === 2, { polling: 100, timeout: 60000 });
+  console.log('      mp step 4');
   await B.page.waitForFunction(() => PANIC.app.members.size === 2, { polling: 100, timeout: 60000 });
   // the room browser sees the room
   // vote + ready from B, start from A
   await B.page.evaluate(() => { PANIC.app.vote('4-2'); PANIC.app.toggleReady(); });
+  console.log('      mp step 5');
   await A.page.waitForFunction(() => PANIC.app.pickLevel() === '4-2' && [...PANIC.app.members.values()].every((m) => m.ready), { polling: 100, timeout: 60000 });
   await shot(A.page, 'e2e-mp-lobby.png');
+  console.log('      mp step 6');
   await A.page.evaluate(() => PANIC.app.startMatch());
+  console.log('      mp step 7');
   await B.page.waitForFunction(() => PANIC.game && PANIC.game.L.id === '4-2', { polling: 100, timeout: 60000 });
+  console.log('      mp step 8');
   await B.page.waitForFunction(() => PANIC.game.sim.phase === 'play', { polling: 100, timeout: 60000 });
   const bid = await B.page.evaluate(() => PANIC.app.selfId);
   const p0 = await A.page.evaluate((id) => { const p = PANIC.game.sim.player(id); return { x: p.x, y: p.y, outfit: p.outfit }; }, bid);
   assert(p0.outfit === 'wizard', 'host sees guest outfit');
   await B.page.bringToFront();
   await B.page.keyboard.down('KeyA');
+  console.log('      mp step 9');
   await B.page.waitForFunction((x0) => PANIC.game.me.x < x0 - 0.6, { polling: 50, timeout: 60000 }, p0.x).catch(() => {});
   await B.page.keyboard.up('KeyA');
   // the host hears about it within a few position packets
+  console.log('      mp step 10');
   await A.page.waitForFunction((id, x0) => PANIC.game.sim.player(id).x < x0 - 0.3, { polling: 100, timeout: 90000 }, bid, p0.x).catch(() => {});
   const p1 = await A.page.evaluate((id) => { const p = PANIC.game.sim.player(id); return { x: p.x, y: p.y }; }, bid);
   assert(p1.x < p0.x - 0.3, `host saw guest move ${p0.x} -> ${p1.x}`);
@@ -151,7 +161,9 @@ await T('multiplayer: quick match pairs two tabs, vote, start, movement and acti
   });
   await sleep(300);
   await B.page.keyboard.press('Enter');
+  console.log('      mp step 11');
   await A.page.waitForFunction((id) => { const p = PANIC.game.sim.player(id); return p.held && p.held.kind === 'ing'; }, { polling: 100, timeout: 60000 }, bid);
+  console.log('      mp step 12');
   await B.page.waitForFunction(() => PANIC.game.me.held && PANIC.game.me.held.kind === 'ing', { polling: 100, timeout: 60000 });
   // orders mirrored
   const oa = await A.page.evaluate(() => PANIC.game.sim.orders.map((o) => o.id).join());
@@ -161,9 +173,11 @@ await T('multiplayer: quick match pairs two tabs, vote, start, movement and acti
   await shot(B.page, 'e2e-mp-guest.png');
   // host ends the round -> both back in the lobby
   await A.page.evaluate(() => { PANIC.app.room.broadcast({ k: 'tolobby' }); PANIC.app.backToLobby(); });
+  console.log('      mp step 13');
   await B.page.waitForSelector('.lobby', { timeout: 60000 });
   // host leaves -> guest returns to title
   await A.page.evaluate(() => PANIC.app.leave());
+  console.log('      mp step 14');
   await B.page.waitForSelector('.title-screen', { timeout: 60000 });
   assert(!A.errors.length && !B.errors.length, [...A.errors, ...B.errors].join('\n'));
   await A.page.close(); await B.page.close();
