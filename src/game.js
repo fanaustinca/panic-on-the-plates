@@ -126,8 +126,11 @@ export class Game {
         if (m.lf !== p.life || p.ko > 0) return;
         Object.assign(p, { x: m.x, y: m.y, z: m.z, fx: m.fx, fy: m.fy, vx: m.vx, vy: m.vy, falling: !!m.fa });
         p.netAt = performance.now();
-      } else if (m.k === 'press') this.sim.press(from, m.tg);
-      else if (m.k === 'work') this.sim.setWork(from, m.on, m.tg);
+      } else if (m.k === 'press' || m.k === 'work') {
+        // actions carry the guest's own position, so a press right after arriving isn't judged on a stale one
+        if (m.at && m.at.lf === p.life && p.ko <= 0) Object.assign(p, { x: m.at.x, y: m.at.y, fx: m.at.fx, fy: m.at.fy });
+        if (m.k === 'press') this.sim.press(from, m.tg); else this.sim.setWork(from, m.on, m.tg);
+      }
     } else {
       if (m.k === 'snap') { this.sim.applySnapshot(m.s, this.selfId); this.snapT = { t: m.s.t, at: performance.now() }; }
       else if (m.k === 'ev') m.list.forEach((e) => this.handleEvent(e));
@@ -158,7 +161,7 @@ export class Game {
       if (canAct) {
         if (inp.consumePress()) {
           if (this.isHost) { this.sim.press(this.selfId, me.target); this.sim.setWork(this.selfId, true, me.target); }
-          else { this.room.toHost({ k: 'press', tg: me.target }); this.room.toHost({ k: 'work', on: true, tg: me.target }); }
+          else { const at = { x: +me.x.toFixed(3), y: +me.y.toFixed(3), fx: +me.fx.toFixed(3), fy: +me.fy.toFixed(3), lf: me.life }; this.room.toHost({ k: 'press', tg: me.target, at }); this.room.toHost({ k: 'work', on: true, tg: me.target, at }); }
         }
         if (inp.consumeRelease()) {
           if (this.isHost) this.sim.setWork(this.selfId, false);
