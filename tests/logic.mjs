@@ -316,5 +316,15 @@ test('upgrades speed up chopping and running', () => {
   assert(Math.abs(a.vx) > Math.abs(q.vx) * 1.2, `upgraded run speed ${a.vx} vs ${q.vx}`);
 });
 
+test('jungle kitchens are treehouse pods joined by rope bridges', () => {
+  for (let li = 0; li <= 10; li++) {
+    const L = buildLevel(5, li);
+    assert(L.zones.length >= 2, `5-${li}: ${L.zones.length} pods`);
+    assert(L.gaps.every((g) => g.x1 - g.x0 === 1), `5-${li}: gaps are two tiles wide`);
+    for (const g of L.gaps) assert(L.bridges.some((b) => b.rope && b.tiles[0][0] === g.x0), `5-${li}: every gap has a rope bridge`);
+  }
+  assert(buildLevel(5, 6).zones.length === 3 && buildLevel(5, 10).zones.length === 3, 'later and multiplayer treehouses have three pods');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

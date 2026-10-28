@@ -38,11 +38,22 @@ const noise = (g, s, r, alpha, n = 900) => {
 export function floorTex(kind) {
   return canvasTex('floor-' + kind, 256, (g, s, r) => {
     const P = {
-      planks: [0xb07a45, 0x8a5a30], ice: [0xd6f1fb, 0x9fd3ec], basalt: [0x3a3330, 0x251f1d], metalgrid: [0x8b96a6, 0x5c6676],
+      planks: [0xb07a45, 0x8a5a30], treeplanks: [0x9c6a3a, 0x3a2412], ice: [0xd6f1fb, 0x9fd3ec], basalt: [0x3a3330, 0x251f1d], metalgrid: [0x8b96a6, 0x5c6676],
       cloudtile: [0xf4f1ff, 0xd8d2f2], bamboo: [0xc9a85a, 0x9b7c38], steelplate: [0x7c848c, 0x5a6168], parquet: [0x8a5a3a, 0x5e3a24],
     }[kind] || [0xcccccc, 0x999999];
     g.fillStyle = hex(P[0]); g.fillRect(0, 0, s, s);
-    if (kind === 'planks') {
+    if (kind === 'treeplanks') {
+      // rough-sawn boards running front to back, dark gaps between, a nail at each end
+      for (let i = 0; i < 5; i++) {
+        const x = i * 51.2;
+        g.fillStyle = hex(shade(P[0], (r() - 0.5) * 0.28)); g.fillRect(x, 0, 51.2, s);
+        g.strokeStyle = 'rgba(50,25,8,0.3)'; g.lineWidth = 1;
+        for (let k = 0; k < 5; k++) { g.beginPath(); const xx = x + 6 + r() * 40; g.moveTo(xx, 0); g.bezierCurveTo(xx + r() * 8 - 4, 90, xx + r() * 8 - 4, 170, xx, s); g.stroke(); }
+        g.fillStyle = 'rgba(40,20,6,0.55)'; g.beginPath(); g.ellipse(x + 10 + r() * 30, r() * s, 4, 7, 0, 0, 7); g.fill();
+        g.fillStyle = hex(P[1]); g.fillRect(x, 0, 4, s);
+        g.fillStyle = '#2a2a2a'; for (const y of [14, s - 14]) for (const dx of [12, 39]) { g.beginPath(); g.arc(x + dx, y, 2.5, 0, 7); g.fill(); }
+      }
+    } else if (kind === 'planks') {
       for (let i = 0; i < 4; i++) {
         g.fillStyle = hex(shade(P[0], (r() - 0.5) * 0.18)); g.fillRect(0, i * 64, s, 64);
         g.strokeStyle = 'rgba(60,30,10,0.25)'; g.lineWidth = 1;
@@ -105,7 +116,7 @@ export function wallTex(kind) {
   return canvasTex('wall-' + kind, 256, (g, s, r) => {
     const P = {
       hull: [0x6b4424, 0x4a2c16], snowbrick: [0xeef6fb, 0xb9d3e3], obsidian: [0x241a26, 0x0f0a10], hullpanel: [0xd6dde6, 0x8d99a8],
-      marble: [0xf6f2ea, 0xd8cfc0], trunk: [0x6a4a2a, 0x4a3018], brickfactory: [0x8a4a3a, 0x5a2e24], bookshelf: [0x4a2a1a, 0x2a160c],
+      marble: [0xf6f2ea, 0xd8cfc0], trunk: [0x6a4a2a, 0x4a3018], logs: [0x7a5230, 0x3a2412], brickfactory: [0x8a4a3a, 0x5a2e24], bookshelf: [0x4a2a1a, 0x2a160c],
     }[kind] || [0x888888, 0x555555];
     g.fillStyle = hex(P[0]); g.fillRect(0, 0, s, s);
     if (kind === 'snowbrick' || kind === 'brickfactory') {
@@ -128,6 +139,18 @@ export function wallTex(kind) {
     } else if (kind === 'hull' || kind === 'trunk') {
       for (let i = 0; i < 8; i++) { g.fillStyle = hex(shade(P[0], (r() - 0.5) * 0.2)); g.fillRect(0, i * 32, s, 30); }
       g.strokeStyle = 'rgba(0,0,0,0.3)'; for (let i = 0; i < 30; i++) { g.beginPath(); const y = r() * s; g.moveTo(0, y); g.lineTo(s, y + (r() - 0.5) * 10); g.stroke(); }
+    } else if (kind === 'logs') {
+      // log-cabin wall: stacked round logs, each shaded as a cylinder, with chinking between
+      g.fillStyle = '#c8b58a'; g.fillRect(0, 0, s, s);
+      for (let i = 0; i < 6; i++) {
+        const y = i * (s / 6), h = s / 6 - 3;
+        const c = shade(P[0], (r() - 0.5) * 0.2);
+        const grd = g.createLinearGradient(0, y, 0, y + h);
+        grd.addColorStop(0, hex(shade(c, -0.45))); grd.addColorStop(0.35, hex(shade(c, 0.12))); grd.addColorStop(1, hex(shade(c, -0.55)));
+        g.fillStyle = grd; g.beginPath(); g.roundRect(0, y + 1.5, s, h, h / 2); g.fill();
+        g.strokeStyle = 'rgba(30,15,5,0.35)'; g.lineWidth = 1;
+        for (let k = 0; k < 6; k++) { g.beginPath(); const yy = y + 4 + r() * (h - 8); g.moveTo(0, yy); g.bezierCurveTo(80, yy + r() * 4 - 2, 170, yy + r() * 4 - 2, s, yy); g.stroke(); }
+      }
     } else if (kind === 'hullpanel') {
       g.strokeStyle = hex(P[1]); g.lineWidth = 4; g.strokeRect(4, 4, s - 8, s / 2 - 8); g.strokeRect(4, s / 2 + 4, s - 8, s / 2 - 8);
       g.fillStyle = '#2ad0ff'; g.fillRect(20, s / 2 - 2, s - 40, 4);
@@ -145,7 +168,7 @@ export function wallTex(kind) {
 /** Counter top texture per world style. */
 export function topTex(style) {
   return canvasTex('top-' + style, 128, (g, s, r) => {
-    const base = { wood: 0xc08a52, ice: 0xdaf2fb, stone: 0x5a4a44, panel: 0xe8eef4, marble: 0xfaf6ee, bamboo: 0xd8b46a, steel: 0xaab2ba, darkwood: 0x6a3e26 }[style] || 0xcccccc;
+    const base = { wood: 0xc08a52, ice: 0xdaf2fb, stone: 0x3b3537, panel: 0xe8eef4, marble: 0xfaf6ee, bamboo: 0xd8b46a, steel: 0xaab2ba, darkwood: 0x6a3e26 }[style] || 0xcccccc;
     g.fillStyle = hex(base); g.fillRect(0, 0, s, s);
     if (style === 'wood' || style === 'darkwood' || style === 'bamboo') {
       g.strokeStyle = `rgba(60,30,10,${style === 'darkwood' ? 0.4 : 0.22})`;
@@ -157,7 +180,16 @@ export function topTex(style) {
       const grd = g.createLinearGradient(0, 0, s, s); grd.addColorStop(0, 'rgba(255,255,255,0.35)'); grd.addColorStop(0.5, 'rgba(255,255,255,0)'); grd.addColorStop(1, 'rgba(255,255,255,0.25)');
       g.fillStyle = grd; g.fillRect(0, 0, s, s);
     } else if (style === 'stone') {
-      for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(${r() < 0.2 ? '255,120,40' : '0,0,0'},${0.15 + r() * 0.2})`; g.beginPath(); g.arc(r() * s, r() * s, 1 + r() * 4, 0, 7); g.fill(); }
+      // polished basalt slab: mottled grain, pale flecks and a hairline lava vein or two
+      for (let i = 0; i < 220; i++) { const l = r(); g.fillStyle = l < 0.5 ? `rgba(0,0,0,${0.1 + r() * 0.2})` : `rgba(160,150,150,${0.06 + r() * 0.12})`; g.beginPath(); g.arc(r() * s, r() * s, 0.6 + r() * 2.6, 0, 7); g.fill(); }
+      for (let v = 0; v < 1; v++) {
+        let x = s * (0.25 + r() * 0.5), y = 0;
+        g.lineWidth = 1 + r() * 0.6; g.strokeStyle = 'rgba(255,110,30,0.5)'; g.shadowColor = '#ff5a00'; g.shadowBlur = 4;
+        g.beginPath(); g.moveTo(x, y);
+        while (y < s) { x += (r() - 0.5) * 22; y += 6 + r() * 12; g.lineTo(x, y); }
+        g.stroke(); g.shadowBlur = 0;
+      }
+      const sh = g.createLinearGradient(0, 0, s, s); sh.addColorStop(0, 'rgba(255,255,255,0.08)'); sh.addColorStop(0.6, 'rgba(255,255,255,0)'); g.fillStyle = sh; g.fillRect(0, 0, s, s);
     }
     g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 3; g.strokeRect(1, 1, s - 2, s - 2);
     noise(g, s, r, 0.08, 300);
@@ -227,4 +259,54 @@ export function cabinetTex(style = 'wood') {
     g.fillRect(s / 2 - 22, 50, 8, 46); g.fillRect(s / 2 + 14, 50, 8, 46);
     g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(s / 2 - 21, 52, 2, 42); g.fillRect(s / 2 + 15, 52, 2, 42);
   });
+}
+
+/** Straw thatch for treehouse roofs (strands run down the slope = texture v). */
+export function thatchTex() {
+  return canvasTex('thatch', 256, (g, s, r) => {
+    g.fillStyle = '#a8843e'; g.fillRect(0, 0, s, s);
+    for (let row = 0; row < 4; row++) {
+      for (let i = 0; i < 260; i++) {
+        const x = r() * s, y = row * 64 + r() * 20, len = 40 + r() * 30;
+        const c = shade(0xc8a050, (r() - 0.5) * 0.5);
+        g.strokeStyle = hex(c); g.lineWidth = 1 + r() * 1.5;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * 6, y + len); g.stroke();
+      }
+      g.fillStyle = 'rgba(40,25,5,0.35)'; g.fillRect(0, row * 64 + 60, s, 4);
+    }
+  }, { repeat: 1 });
+}
+
+/** Vertical bark grooves. */
+export function barkTex() {
+  return canvasTex('bark', 256, (g, s, r) => {
+    g.fillStyle = '#5a3c22'; g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 70; i++) {
+      const x = r() * s, w = 2 + r() * 6;
+      g.fillStyle = r() < 0.5 ? `rgba(20,10,4,${0.3 + r() * 0.4})` : `rgba(150,110,70,${0.15 + r() * 0.2})`;
+      g.beginPath(); g.moveTo(x, 0);
+      let xx = x; for (let y = 0; y <= s; y += 16) { xx += (r() - 0.5) * 4; g.lineTo(xx, y); }
+      for (let y = s; y >= 0; y -= 16) g.lineTo(xx + w, y);
+      g.fill();
+    }
+    for (let i = 0; i < 30; i++) { g.fillStyle = `rgba(70,110,40,${0.15 + r() * 0.25})`; g.beginPath(); g.ellipse(r() * s, r() * s, 6 + r() * 14, 3 + r() * 6, 0, 0, 7); g.fill(); }
+  });
+}
+
+/** A single jungle leaf on transparent background (for canopy cards). */
+export function leafTex(tint = '#3f8f32') {
+  return canvasTex('leaf' + tint, 128, (g, s, r) => {
+    g.clearRect(0, 0, s, s);
+    for (let k = 0; k < 3; k++) {
+      const a = -0.6 + k * 0.6, cx = s / 2, cy = s * 0.95;
+      g.save(); g.translate(cx, cy); g.rotate(a);
+      const L = s * (0.78 - Math.abs(k - 1) * 0.12), W = L * 0.32;
+      const grd = g.createLinearGradient(-W, 0, W, 0);
+      grd.addColorStop(0, hex(shade(parseInt(tint.slice(1), 16), -0.35))); grd.addColorStop(0.5, hex(shade(parseInt(tint.slice(1), 16), 0.15))); grd.addColorStop(1, hex(shade(parseInt(tint.slice(1), 16), -0.3)));
+      g.fillStyle = grd;
+      g.beginPath(); g.moveTo(0, 0); g.bezierCurveTo(W, -L * 0.3, W * 0.8, -L * 0.8, 0, -L); g.bezierCurveTo(-W * 0.8, -L * 0.8, -W, -L * 0.3, 0, 0); g.fill();
+      g.strokeStyle = 'rgba(220,255,180,0.45)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -L * 0.95); g.stroke();
+      g.restore();
+    }
+  }, { srgb: true });
 }

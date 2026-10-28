@@ -46,7 +46,9 @@ function tryBuild(wi, liIn, seed) {
   // the multiplayer kitchen plays like a mid-campaign level, on a much bigger floor
   const mp = liIn === MP_LEVEL;
   const li = mp ? 5 : liIn;
-  const W = mp ? 19 : [11, 12, 12, 13, 13, 14, 14, 15, 15, 16][li];
+  // jungle: the kitchen is split over separate treehouse pods, so it gets extra width for the gaps
+  const podZ = wi === 5 ? (mp || li >= 5 ? 3 : 2) : 0;
+  const W = mp ? 19 : [11, 12, 12, 13, 13, 14, 14, 15, 15, 16][li] + (podZ === 3 ? 3 : podZ ? 1 : 0);
   const H = mp ? 11 : li < 4 ? 9 : 10;
   const tiles = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tiles.push({ k: 'floor', x, y });
@@ -56,8 +58,8 @@ function tryBuild(wi, liIn, seed) {
   // ---- zones (islands separated by void gaps) ----
   let Z = mp ? 2 : li < 2 ? 1 : li < 4 ? (r.chance(0.5) ? 1 : 2) : li < 8 ? 2 : (W >= 15 ? 3 : 2);
   if (wi === 1 && li >= 2) Z = Math.max(Z, 2); // glacier: drifting floes need water channels
-  if (wi === 5 && li >= 2) Z = Math.max(Z, 2); // jungle: rope bridges between treehouses
-  const gapW = wi === 1 ? 2 : (li >= 6 && r.chance(0.5) ? 2 : 1);
+  if (podZ) Z = podZ; // jungle: every level is treehouse pods joined by rope bridges
+  const gapW = wi === 1 || podZ ? 2 : (li >= 6 && r.chance(0.5) ? 2 : 1);
   const zones = [];
   const usable = W - (Z - 1) * gapW;
   let cx = 0;
@@ -113,6 +115,7 @@ function tryBuild(wi, liIn, seed) {
     }
     if (li === 0 && zi === 0) {
       const len = Math.min(3, iw - 4);
+      if (len < 1) continue;
       const sx = z.x0 + 1 + Math.floor((iw - len) / 2);
       const sy = 2 + Math.floor(ih / 2);
       for (let x = sx; x < sx + len; x++) set(x, sy, 'counter');

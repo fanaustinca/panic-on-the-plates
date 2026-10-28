@@ -43,10 +43,14 @@ function findBrowser() {
 }
 
 export async function launch() {
+  // GPU=1 renders on the real GPU (Vulkan) for visual review at a proper frame rate; CI uses SwiftShader
+  const gpu = process.env.GPU === '1';
   return puppeteer.launch({
     executablePath: findBrowser(),
     headless: true,
-    args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
+    args: gpu
+      ? ['--no-sandbox', '--use-angle=vulkan', '--enable-features=Vulkan', '--ignore-gpu-blocklist', '--enable-gpu', '--autoplay-policy=no-user-gesture-required']
+      : ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
     protocolTimeout: 300000,
   });
 }

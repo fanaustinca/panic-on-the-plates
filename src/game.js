@@ -112,7 +112,7 @@ export class Game {
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     // the galleon gets extra room so its bow, stern and rigging frame the kitchen
-    const pad = this.world.id === 'pirate' ? [4.2, 3.2] : [2.2, 1.8];
+    const pad = this.world.id === 'pirate' ? [4.2, 3.2] : this.world.id === 'jungle' ? [3.6, 4.4] : this.world.id === 'factory' ? [3.4, 2.8] : [2.2, 1.8];
     const W = this.L.W + pad[0], H = this.L.H + pad[1];
     const elev = THREE.MathUtils.degToRad(52);
     // distance so the kitchen fits horizontally and (foreshortened) vertically, leaving room for the HUD
@@ -263,6 +263,7 @@ export class Game {
       const ko = p.ko > 0;
       c.root.visible = !ko || (p.ko > T.respawn * upgMul(p, 'recover') - 0.6 && p.falling);
       c.root.position.set(this.kitchen.wx(c.disp.x), Math.max(-3, c.disp.z), this.kitchen.wz(c.disp.y));
+      this.kitchen.swayPoint(c.root.position); // ride the swaying treehouse pods
       const ang = Math.atan2(fx, fy);
       let da = ang - c.root.rotation.y;
       da = Math.atan2(Math.sin(da), Math.cos(da));

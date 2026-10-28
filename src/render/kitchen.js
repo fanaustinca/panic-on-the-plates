@@ -9,6 +9,7 @@ import { Particles } from './particles.js';
 import { WATERLINE } from './ship.js';
 import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode, makeItem, itemKey, makeIngredient } from './items.js';
 import { STYLE, buildBackdrop } from './env.js';
+import { treehouse } from './treehouse.js';
 
 const CH = 0.9; // counter height
 const ITEM_Y = { pan: 0.13, pot: 0.2, board: 0.05, oven: 0.0, sink: 0.0 };
@@ -26,7 +27,7 @@ export class Kitchen {
     this.fires = new Map();
     this.stationParts = new Map();
     this.fx = [];
-    this.parts = new Particles();
+    this.parts = new Particles(1600);
     this.root.add(this.parts.group);
     this.chopN = new Map();   // per-cook chop stroke counter (spawns bits on each knife hit)
     this.squash = new Map();  // per-tile squash pulse from knife hits
@@ -34,7 +35,13 @@ export class Kitchen {
     this.struckFx = new Set();
     this.holeTiles = new Set();
     this.tmpQ = new THREE.Quaternion();
+    this.pods = null;
     this.build();
+    if (this.pods) {
+      // particles spawned at flat-layout positions are carried onto the swaying pods
+      const v = new THREE.Vector3();
+      this.parts.map = (o) => { v.set(o.x, o.y, o.z); this.swayPoint(v); if (o.floor != null) o.floor += v.y - o.y; o.x = v.x; o.y = v.y; o.z = v.z; };
+    }
   }
 
   wx(x) { return x - this.L.W / 2; }      // tile edge -> world x
@@ -54,22 +61,30 @@ export class Kitchen {
 
   build() {
     const L = this.L, S = this.S;
+    if (this.world.id === 'jungle') this.makePods();
     const floorM = new THREE.MeshStandardMaterial({ map: floorTex(S.floor), roughness: S.floor === 'ice' ? 0.15 : 0.7, metalness: S.floor === 'ice' ? 0.1 : 0.05 });
     const wallM = new THREE.MeshStandardMaterial({ map: wallTex(S.wall), roughness: 0.8 });
-    const topM = new THREE.MeshStandardMaterial({ map: topTex(S.top), roughness: S.top === 'ice' || S.top === 'marble' ? 0.25 : 0.55, metalness: S.top === 'steel' ? 0.6 : 0 });
+    const topM = new THREE.MeshStandardMaterial({ map: topTex(S.top), roughness: S.top === 'ice' || S.top === 'marble' ? 0.25 : S.top === 'stone' ? 0.35 : 0.55, metalness: S.top === 'steel' ? 0.6 : 0 });
     const sideM = new THREE.MeshStandardMaterial({ map: cabinetTex(S.top === 'steel' || S.top === 'panel' ? 'steel' : 'wood'), color: S.side, roughness: 0.55, metalness: S.top === 'steel' || S.top === 'panel' ? 0.35 : 0 });
     const trimM = mat(S.trim, { rough: 0.4, metal: 0.3, emissive: this.world.id === 'volcano' || this.world.id === 'space' ? S.trim : 0, ei: 0.5 });
     const floors = L.tiles.filter((t) => t.k === 'floor');
     const counters = L.tiles.filter((t) => t.k === 'counter' && !['trash', 'oven'].includes(t.st));
     const walls = L.tiles.filter((t) => t.k === 'wall');
+    // one instanced mesh per parent (the root, or each swaying treehouse pod)
     const inst = (geom, material, list, fn) => {
-      const m = new THREE.InstancedMesh(geom, material, Math.max(1, list.length));
-      const o = new THREE.Object3D();
-      list.forEach((t, i) => { fn(o, t); o.updateMatrix(); m.setMatrixAt(i, o.matrix); });
-      m.count = list.length;
-      m.castShadow = true; m.receiveShadow = true;
-      this.root.add(m);
-      return m;
+      const by = new Map([[this.home(list.length ? list[0].x : -1), []]]);
+      for (const t of list) { const h = this.home(t.x); if (!by.has(h)) by.set(h, []); by.get(h).push(t); }
+      let first = null;
+      for (const [h, sub] of by) {
+        const m = new THREE.InstancedMesh(geom, material, Math.max(1, sub.length));
+        const o = new THREE.Object3D();
+        sub.forEach((t, i) => { fn(o, t); o.updateMatrix(); m.setMatrixAt(i, o.matrix); });
+        m.count = sub.length;
+        m.castShadow = true; m.receiveShadow = true;
+        h.add(m);
+        first = first || m;
+      }
+      return first;
     };
     const B = new THREE.BoxGeometry(1, 1, 1);
     // floor slabs (counters sit on slabs too, so islands read as solid platforms)
@@ -91,8 +106,9 @@ export class Kitchen {
     this.buildShifters();
     this.buildMovers(sideM, topM);
     this.buildHazardProps();
-    this.backdrop = buildBackdrop(this.world.id, L.W, L.H, this.world.sky);
+    this.backdrop = buildBackdrop(this.world.id, L.W, L.H, this.world.sky, L);
     this.root.add(this.backdrop.group);
+    if (this.pods) this.buildTreehouse();
     this.worldGroup = this.backdrop.world; // added to the scene by the game; does not roll
     // target highlight
     this.highlight = new THREE.Mesh(new THREE.BoxGeometry(1.04, 0.04, 1.04), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }));
@@ -106,7 +122,7 @@ export class Kitchen {
     tex.rotation = t.push > 0 ? 0 : Math.PI;
     tex.center.set(0.5, 0.5);
     const m = part(new THREE.PlaneGeometry(0.98, 0.98), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }), [this.cx(t.x), 0.006, this.cz(t.y)], 1, [-Math.PI / 2, 0, 0]);
-    this.root.add(m);
+    this.home(t.x).add(m);
     this.fx.push({ belt: tex, dir: 1 });
   }
 
@@ -115,7 +131,7 @@ export class Kitchen {
     g.position.set(this.cx(t.x), CH, this.cz(t.y));
     const [dx, dy] = this.faceDir(t);
     g.rotation.y = Math.atan2(dx, dy);
-    this.root.add(g);
+    this.home(t.x).add(g);
     const P = { group: g };
     const add = (...a) => { const m = part(...a); g.add(m); return m; };
     const steel = mat(0xc8d0d8, { metal: 0.8, rough: 0.3 }), dark = mat(0x26282c, { metal: 0.5, rough: 0.5 });
@@ -280,6 +296,7 @@ export class Kitchen {
     this.bridgeMeshes = [];
     const id = this.world.id;
     for (const b of this.L.bridges) {
+      if (b.rope && this.pods) { this.bridgeMeshes.push({ b, g: this.buildRopeBridge(b) }); continue; }
       const g = new THREE.Group();
       for (const [x, y] of b.tiles) {
         const tg = new THREE.Group();
@@ -323,7 +340,7 @@ export class Kitchen {
       const ends = stripeTex();
       for (const sx of [-1, 1]) tg.add(part(new THREE.PlaneGeometry(0.16, 0.7), new THREE.MeshBasicMaterial({ map: ends }), [sx * (len / 2 - 0.08), 0.012, 0], 1, [-Math.PI / 2, 0, 0]));
       tg.children.forEach((c) => { c.castShadow = false; });
-      this.root.add(tg);
+      this.home(m.x0).add(tg);
       // the counter itself on a wheeled bogie
       const g = new THREE.Group();
       g.add(part(box(), sideM, [0, CH / 2 + 0.02, 0], [0.94, CH - 0.12, 0.94]));
@@ -336,7 +353,7 @@ export class Kitchen {
         const l = part(sph(10), new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8000, emissiveIntensity: 0.1 }), [sx * 0.42, CH + 0.05, 0.42], 0.05);
         g.add(l); lights.push(l);
       }
-      this.root.add(g);
+      this.home(m.x0).add(g);
       return { m, g, lights, hold: null, key: '' };
     });
   }
@@ -351,7 +368,7 @@ export class Kitchen {
       const warn = part(new THREE.PlaneGeometry(0.96, 0.96), new THREE.MeshBasicMaterial({ map: stripeTex(), transparent: true, opacity: 0.8, depthWrite: false }), [0, 0.012, 0], 1, [-Math.PI / 2, 0, 0]);
       warn.castShadow = false;
       const wg = new THREE.Group(); wg.add(warn); wg.position.copy(g.position);
-      this.root.add(g, wg);
+      this.home(s.x).add(g, wg);
       return { s, g, warn: wg };
     });
   }
@@ -480,6 +497,7 @@ export class Kitchen {
     this.backdrop.update(rt);
     const play = Math.max(0, t);
     this.updateRoll(env, rt);
+    if (this.pods) { this.updatePods(env, rt, dt); this.updateTreehouse(rt); }
     this.parts.update(dt);
     this.emitAcc += dt;
     const emit = this.emitAcc >= 1 / 30;
@@ -513,11 +531,11 @@ export class Kitchen {
         const key = itemKey(it);
         let e = this.itemMeshes.get(i);
         if (!e || e.key !== key) {
-          if (e) { this.dyn.remove(e.mesh); if (e.pile) this.dyn.remove(e.pile); }
+          if (e) { e.mesh.removeFromParent(); if (e.pile) e.pile.removeFromParent(); }
           const mesh = makeItem(it);
           e = { key, mesh };
           this.itemMeshes.set(i, e);
-          this.dyn.add(mesh);
+          this.home(tl.x).add(mesh);
         }
         const base = tl.st === 'oven' ? 1.15 : tl.st === 'trash' ? 0.9 : CH + (ITEM_Y[tl.st] || 0);
         const bt = tl.belt != null ? Math.min(1, s.bt || 0) : 0;
@@ -528,7 +546,7 @@ export class Kitchen {
         const sq = this.squash.get(i) || 0;
         if (sq > 0) this.squash.set(i, Math.max(0, sq - dt * 7));
         if (tl.st === 'board' && it.kind === 'ing' && it.s === 'raw' && it.p > 0) {
-          if (!e.pile) { e.pile = makeItem({ kind: 'ing', ing: it.ing, s: 'chopped' }); this.dyn.add(e.pile); }
+          if (!e.pile) { e.pile = makeItem({ kind: 'ing', ing: it.ing, s: 'chopped' }); this.home(tl.x).add(e.pile); }
           const k = Math.min(1, it.p);
           e.mesh.scale.set(1 - k * 0.45, (1 - k * 0.5) * (1 - sq * 0.35), 1 - k * 0.45);
           e.mesh.position.x -= 0.08;
@@ -537,7 +555,7 @@ export class Kitchen {
           e.pile.position.set(this.cx(tl.x) + 0.13, base, this.cz(tl.y) + 0.06);
         } else {
           e.mesh.scale.set(1, 1 - sq * 0.25, 1);
-          if (e.pile) { this.dyn.remove(e.pile); e.pile = null; }
+          if (e.pile) { e.pile.removeFromParent(); e.pile = null; }
         }
       }
       // progress bars
@@ -575,7 +593,7 @@ export class Kitchen {
         if (tl.st === 'sink' && emit && sim.players.some((p) => p.act === 'wash' && p.target && p.target[0] === tl.x && p.target[1] === tl.y)) this.washFx(tl, edt);
       }
     });
-    for (const [i, e] of this.itemMeshes) if (!seen.has(i) && Number.isInteger(i)) { this.dyn.remove(e.mesh); if (e.pile) this.dyn.remove(e.pile); this.itemMeshes.delete(i); }
+    for (const [i, e] of this.itemMeshes) if (!seen.has(i) && Number.isInteger(i)) { e.mesh.removeFromParent(); if (e.pile) e.pile.removeFromParent(); this.itemMeshes.delete(i); }
 
     if (emit) for (const p of sim.players) if (p.act === 'spray') this.sprayFx(p, edt);
     // belts scroll
@@ -594,11 +612,12 @@ export class Kitchen {
       const target = off ? -3 : 0;
       g.position.y += (target - g.position.y) * Math.min(1, dt * (off ? 2.5 : 6));
       g.position.x = wrn ? Math.sin(rt * 40) * 0.03 : 0;
-      if (b.rope) {
+      if (b.rope && !this.pods) {
         g.position.z = env.swayV * 0.06;
         g.rotation.x = env.swayV * 0.03;
       }
       g.visible = g.position.y > -2.8;
+      if (b.rope && this.pods && g.visible) this.updateRopeBridge(g);
     }
     this.updateHoles(play, dt, rt, emit, edt);
     (this.moverMeshes || []).forEach((e, i) => {
@@ -609,9 +628,9 @@ export class Kitchen {
       const it = sim.mv[i] && sim.mv[i].item;
       const key = itemKey(it);
       if (e.key !== key) {
-        if (e.hold) this.dyn.remove(e.hold);
+        if (e.hold) e.hold.removeFromParent();
         e.hold = it ? makeItem(it) : null;
-        if (e.hold) this.dyn.add(e.hold);
+        if (e.hold) this.home(e.m.x0).add(e.hold);
         e.key = key;
       }
       if (e.hold) e.hold.position.set(e.g.position.x, CH, e.g.position.z);
@@ -624,6 +643,47 @@ export class Kitchen {
       warn.children[0].material.opacity = 0.5 + Math.sin(rt * 14) * 0.4;
     }
     this.updateHazards(sim, play, dt, rt, env);
+    if (emit) this.hazardFx(play, edt, rt);
+  }
+
+  /** Flame/lava particles for the volcano hazards (fire walls, magma geysers, falling embers). */
+  hazardFx(t, dt, rt) {
+    const P = this.parts;
+    const chance = (perSec) => Math.random() < perSec * dt;
+    const many = (perSec) => { const c = perSec * dt, k = Math.floor(c); return k + (Math.random() < c - k ? 1 : 0); };
+    for (const h of this.hzMeshes) {
+      if (h.kind === 'firewall') {
+        const c = cycle(t, h.h.period, h.h.on, h.h.phase);
+        for (const it of h.items) {
+          const { x, z } = it.g.position;
+          if (c.on) {
+            for (let k = 0, n = many(90); k < n; k++) P.flame(x, 0.05, z, { s: 0.62, vy: 3, life: 0.6, spread: 0.75, hot: k === 0 });
+            if (chance(6)) P.puff({ x, y: 0.9, z, vx: (Math.random() - 0.5), vy: 1.6, drag: 0.5, life: 1.4, s0: 0.3, s1: 0.9, a: 0.25, color: 0x2a2020 });
+          } else if (c.warn) {
+            // the crack spits sparks and small licks before it erupts
+            if (chance(25)) P.puff({ x: x + (Math.random() - 0.5) * 0.6, y: 0.05, z, vx: (Math.random() - 0.5), vy: 1.5 + Math.random() * 2, g: 6, life: 0.5, s0: 0.07, s1: 0.03, a: 1, color: 0xffe080, color1: 0xff3000, glow: true });
+            if (chance(8)) P.flame(x, 0.03, z, { s: 0.2, vy: 0.8, life: 0.3, spread: 0.6 });
+          }
+        }
+      } else if (h.kind === 'geyser') {
+        const c = cycle(t, h.h.period, 1.7, h.h.phase);
+        const { x, z } = h.g.position;
+        if (c.on) {
+          for (let k = 0, n = many(150); k < n; k++) P.flame(x, 0.1, z, { s: 0.5, vy: 6.5, drag: 0.6, life: 0.55, spread: 0.25, hot: k < 2 });
+          for (let k = 0, n = many(60); k < n; k++) { const a = Math.random() * Math.PI * 2; P.puff({ x, y: 1.6 + Math.random() * 0.8, z, vx: Math.cos(a) * 1.4, vy: 1 + Math.random() * 2, vz: Math.sin(a) * 1.4, g: 9, life: 1, s0: 0.14, s1: 0.06, a: 1, color: 0xffe080, color1: 0xff2000, glow: true, floor: 0.02, fadePow: 4 }); }
+        } else if (c.warn) {
+          // the vent bubbles and spits
+          if (chance(14)) { const a = Math.random() * Math.PI * 2; P.puff({ x, y: 0.12, z, vx: Math.cos(a) * 0.6, vy: 1.5 + Math.random() * 1.5, vz: Math.sin(a) * 0.6, g: 9, life: 0.6, s0: 0.12, s1: 0.06, a: 1, color: 0xffd060, color1: 0xff2a00, glow: true, floor: 0.02 }); }
+          if (chance(10)) P.flame(x, 0.1, z, { s: 0.25, vy: 1.2, life: 0.35, spread: 0.2 });
+        }
+      }
+    }
+    // falling embers leave a fiery trail
+    for (const e of this.strikePool) {
+      if (!e.g.visible || !e.ember.visible) continue;
+      const x = e.g.position.x + e.ember.position.x, y = e.g.position.y + e.ember.position.y, z = e.g.position.z + e.ember.position.z;
+      for (let k = 0, n = many(60); k < n; k++) P.flame(x, y + 0.1, z, { s: 0.35, vy: 0.6, life: 0.4, spread: 0.12, hot: k === 0 });
+    }
   }
 
 
@@ -687,9 +747,45 @@ export class Kitchen {
       case 'glacier':
         for (let k = 0; k < 3; k++) if (chance(14)) P.puff({ x: rx(), y: 6, z: rz(), vx: 0.3, vy: -0.9, life: 7, s0: 0.07, s1: 0.06, a: 0.9, color: 0xffffff, fadeIn: 0.5, fadePow: 6 });
         break;
-      case 'volcano':
-        for (let k = 0; k < 2; k++) if (chance(12)) P.puff({ x: rx(), y: -1.2, z: rz(), vx: (Math.random() - 0.5) * 0.4, vy: 1 + Math.random() * 1.2, life: 3.5, s0: 0.07, s1: 0.02, a: 1, color: Math.random() < 0.5 ? 0xff7a20 : 0xffc040, glow: true, fadeIn: 0.3 });
+      case 'volcano': {
+        // embers drifting up past the kitchen
+        for (let k = 0; k < 2; k++) if (chance(12)) P.puff({ x: rx(), y: -1.2, z: rz(), vx: (Math.random() - 0.5) * 0.4, vy: 1 + Math.random() * 1.2, life: 3.5, s0: 0.07, s1: 0.02, a: 1, color: 0xffd060, color1: 0xff3000, glow: true, fadeIn: 0.3 });
+        // a spot on the lava around the island (never under it)
+        const lavaSpot = (reach) => {
+          for (let k = 0; k < 8; k++) {
+            const x = (Math.random() - 0.5) * (L.W + reach * 2), z = (Math.random() - 0.5) * (L.H + reach * 2);
+            if (Math.abs(x) > L.W / 2 + 0.9 || Math.abs(z) > L.H / 2 + 0.9) return [x, z];
+          }
+          return [L.W / 2 + 1.5, 0];
+        };
+        // lava bubbles: swell, burst, throw flaming blobs
+        if (chance(7)) {
+          const [x, z] = lavaSpot(4);
+          P.puff({ x, y: -1.7, z, life: 0.45, s0: 0.25, s1: 1.1, a: 0.9, color: 0xffc040, color1: 0xff3a00, glow: true, ring: true });
+          const n = 6 + (Math.random() * 8 | 0);
+          for (let k = 0; k < n; k++) { const a = Math.random() * Math.PI * 2, v = 0.6 + Math.random() * 1.6; P.puff({ x, y: -1.65, z, vx: Math.cos(a) * v, vy: 2.5 + Math.random() * 3.5, vz: Math.sin(a) * v, g: 9, life: 0.9 + Math.random() * 0.5, s0: 0.24, s1: 0.1, a: 1, color: 0xffe080, color1: 0xff2000, glow: true, floor: -1.8, fadePow: 4 }); }
+          for (let k = 0; k < 4; k++) P.flame(x, -1.7, z, { s: 0.45, vy: 1.8, life: 0.5, spread: 0.3, hot: !k });
+          P.puff({ x, y: -1.4, z, vy: 0.7, drag: 0.4, life: 2.2, s0: 0.4, s1: 1.4, a: 0.3, color: 0x3a2a26 });
+        }
+        // now and then a big eruption fountain right beside the island
+        if (chance(0.6)) {
+          const [x, z] = lavaSpot(2.5);
+          for (let k = 0; k < 40; k++) { const a = Math.random() * Math.PI * 2, v = Math.random() * 1.8; P.puff({ x, y: -1.6, z, vx: Math.cos(a) * v, vy: 5 + Math.random() * 4.5, vz: Math.sin(a) * v, g: 9, life: 1.6 + Math.random() * 0.6, s0: 0.2, s1: 0.08, a: 1, color: 0xfff0a0, color1: 0xff2a00, glow: true, floor: -1.8, fadePow: 4 }); }
+          for (let k = 0; k < 14; k++) P.flame(x, -1.6, z, { s: 0.7, vy: 4, life: 0.8, spread: 0.6, hot: true });
+          for (let k = 0; k < 6; k++) P.puff({ x, y: -1, z, vx: (Math.random() - 0.5), vy: 1.2 + Math.random(), drag: 0.4, life: 3, s0: 0.6, s1: 2.2, a: 0.3, color: 0x2a2020 });
+        }
+        // heat haze smoke off the lava
+        if (chance(3)) { const [x, z] = lavaSpot(7); P.puff({ x, y: -1.5, z, vx: 0.15, vy: 0.6 + Math.random() * 0.4, drag: 0.2, life: 4, s0: 0.8, s1: 3, a: 0.16, color: 0x4a3430, fadeIn: 1 }); }
+        const fx = this.backdrop.fx;
+        if (fx) {
+          for (const [x, y, z] of fx.falls) if (chance(14)) P.puff({ x: x + (Math.random() - 0.5) * 1.2, y, z, vx: (Math.random() - 0.5) * 1.5, vy: 1.5 + Math.random() * 2.5, vz: 0.5 + Math.random(), g: 9, life: 0.8, s0: 0.14, s1: 0.06, a: 1, color: 0xffd060, color1: 0xff2a00, glow: true, floor: -1.8 });
+          for (const [x, y, z, vr] of fx.vents) {
+            if (chance(2.5)) P.puff({ x: x + (Math.random() - 0.5) * vr * 0.3, y, z, vx: 0.4, vy: 1.4, drag: 0.1, life: 7, s0: vr * 0.3, s1: vr * 0.9, a: 0.35, color: 0x2a2224, fadeIn: 1 });
+            if (chance(5)) P.puff({ x, y, z, vx: (Math.random() - 0.5) * 3, vy: 4 + Math.random() * 4, vz: (Math.random() - 0.5) * 3, g: 6, life: 1.8, s0: 0.5, s1: 0.2, a: 1, color: 0xffd060, color1: 0xff2a00, glow: true });
+          }
+        }
         break;
+      }
       case 'space':
         if (chance(8)) P.puff({ x: rx(), y: Math.random() * 4, z: rz(), vx: (Math.random() - 0.5) * 0.2, vy: (Math.random() - 0.5) * 0.2, life: 4, s0: 0.05, s1: 0.05, a: 0.9, color: 0x8ae8ff, glow: true, fadeIn: 1, fadePow: 4 });
         break;
@@ -700,9 +796,26 @@ export class Kitchen {
         if (chance(6)) P.puff({ x: rx(), y: 0.4 + Math.random() * 2.5, z: rz(), vx: (Math.random() - 0.5) * 0.5, vy: (Math.random() - 0.5) * 0.3, drag: 0.2, life: 3, s0: 0.06, s1: 0.06, a: 1, color: 0xd8ff6a, glow: true, fadeIn: 0.6, fadePow: 3 });
         if (chance(1.5)) P.chunk({ x: rx(), y: 6, z: rz(), vx: 0.6, vy: 0, color: 0x4ab04a, s: 0.07, sy: 0.15, life: 3.5, floor: 0 });
         break;
-      case 'factory':
-        if (chance(3)) { const sx = Math.random() < 0.5 ? -1 : 1; P.puff({ x: sx * (L.W / 2 + 0.8), y: 0.4, z: rz(), vy: 1.6, vx: -sx * 0.2, life: 2.2, s0: 0.3, s1: 1.4, a: 0.3, color: 0xe8eef4 }); }
+      case 'factory': {
+        const fx = this.backdrop.fx;
+        if (!fx) break;
+        const w = this.tmpV || (this.tmpV = new THREE.Vector3());
+        // welding sparks spraying off the robot torches
+        for (const sp of fx.sparks) if (sp.on()) {
+          sp.obj.getWorldPosition(w); this.root.worldToLocal(w);
+          for (let k = 0; k < 4; k++) { const a = Math.random() * Math.PI * 2, v = 1 + Math.random() * 2.5; P.puff({ x: w.x, y: w.y, z: w.z, vx: Math.cos(a) * v, vy: 0.5 + Math.random() * 2.5, vz: Math.sin(a) * v, g: 9, drag: 0.3, life: 0.5 + Math.random() * 0.4, s0: 0.06, s1: 0.02, a: 1, color: 0xfff6c0, color1: 0xff8a20, glow: true }); }
+          if (chance(4)) P.puff({ x: w.x, y: w.y, z: w.z, vy: 0.6, drag: 0.5, life: 1.5, s0: 0.15, s1: 0.6, a: 0.25, color: 0xc8d0d8 });
+        }
+        for (const st of fx.steam) {
+          const [x, y, z] = [st.at.x, st.at.y, st.at.z];
+          if (st.burst && st.burst()) for (let k = 0; k < 4; k++) { const a = Math.random() * Math.PI * 2; P.puff({ x, y, z, vx: Math.cos(a) * 2.5, vy: 0.6 + Math.random(), vz: Math.sin(a) * 1.5 + 1, drag: 1.5, life: 1.6, s0: 0.4, s1: 1.8, a: 0.45, color: 0xeef2f6 }); }
+          if (st.jet && chance(10)) P.puff({ x, y, z, vx: (Math.random() - 0.5) * 0.3, vy: 0.4, vz: 2.2, drag: 1.2, life: 1.3, s0: 0.12, s1: 0.9, a: 0.35, color: 0xeef2f6 });
+          if (st.drift && chance(2)) P.puff({ x, y, z, vx: 0.3, vy: 0.9, drag: 0.2, life: 5, s0: 0.5, s1: 2, a: 0.25, color: 0xd8dde2, fadeIn: 0.5 });
+        }
+        // dust motes drifting in the lamp light
+        for (const [x, y, z] of fx.dust) if (chance(3)) P.puff({ x: x + (Math.random() - 0.5) * 2.5, y: y + (Math.random() - 0.5) * 4, z: z + (Math.random() - 0.5) * 2.5, vx: (Math.random() - 0.5) * 0.1, vy: -0.05, life: 4, s0: 0.035, s1: 0.035, a: 0.8, color: 0xfff2d0, glow: true, fadeIn: 1, fadePow: 3 });
         break;
+      }
       case 'library':
         if (chance(10)) P.puff({ x: rx(), y: Math.random() * 3, z: rz(), vy: 0.25, vx: Math.sin(rt + Math.random()) * 0.2, life: 4, s0: 0.05, s1: 0.03, a: 1, color: Math.random() < 0.5 ? 0xffd27a : 0xc89aff, glow: true, fadeIn: 0.8 });
         break;
@@ -883,13 +996,13 @@ export class Kitchen {
     let e = this.itemMeshes.get(key);
     const k = n ? `${n}${dirty}` : '';
     if (!e || e.key !== k) {
-      if (e) this.dyn.remove(e.mesh);
+      if (e) e.mesh.removeFromParent();
       this.itemMeshes.delete(key);
       if (!n) return false;
       const mesh = makeItem({ kind: 'plate', n, dirty, c: [] });
       e = { key: k, mesh };
       this.itemMeshes.set(key, e);
-      this.dyn.add(mesh);
+      this.home(tl.x).add(mesh);
     }
     const [dx, dy] = this.faceDir(tl);
     // sideways offset (clean rack sits to the right of the basin)
@@ -913,14 +1026,14 @@ export class Kitchen {
       const icon = ui(new THREE.CircleGeometry(0.17, 28), 0xffffff, 24, textTex('✔', { w: 64, h: 64, bg: '#2fbf5a', font: '900 44px sans-serif' }));
       const warnI = ui(new THREE.CircleGeometry(0.19, 28), 0xffffff, 24, textTex('!', { w: 64, h: 64, bg: '#ff3a3a', font: '900 48px Fredoka, sans-serif' }));
       g.add(frame, bg, fill, shine, icon, warnI);
-      this.root.add(g);
+      this.home(tl.x).add(g);
       b = { g, frame, bg, fill, shine, icon, warnI };
       this.bars.set(i, b);
     }
     b.g.visible = true;
     b.g.position.set(this.cx(tl.x), (tl.st === 'oven' ? 1.85 : 1.65), this.cz(tl.y));
     // face the camera even while the deck rolls
-    b.g.quaternion.copy(this.root.getWorldQuaternion(this.tmpQ).invert()).multiply(camera.quaternion);
+    b.g.quaternion.copy(b.g.parent.getWorldQuaternion(this.tmpQ).invert()).multiply(camera.quaternion);
     const showBar = prog != null;
     b.frame.visible = b.bg.visible = b.fill.visible = b.shine.visible = showBar;
     if (showBar) {
@@ -936,7 +1049,7 @@ export class Kitchen {
 
   setFire(i, tl, fire, rt) {
     let f = this.fires.get(i);
-    if (!fire) { if (f) { this.root.remove(f.g); this.fires.delete(i); } return; }
+    if (!fire) { if (f) { f.g.removeFromParent(); this.fires.delete(i); } return; }
     if (!f) {
       const g = new THREE.Group();
       const flames = [];
@@ -950,7 +1063,7 @@ export class Kitchen {
       g.add(glow);
       const smoke = [];
       for (let k = 0; k < 4; k++) { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0x333333, transparent: true, opacity: 0.4, depthWrite: false })); g.add(s); smoke.push(s); }
-      this.root.add(g);
+      this.home(tl.x).add(g);
       f = { g, flames, smoke };
       this.fires.set(i, f);
     }
@@ -968,7 +1081,7 @@ export class Kitchen {
         for (const it of h.items) {
           if (h.kind === 'firewall') {
             it.fl.visible = c.on;
-            if (c.on) it.fl.children.forEach((m, j) => { m.scale.y = 1.1 * (0.8 + 0.3 * Math.sin(rt * 15 + j)); });
+            if (c.on) it.fl.children.forEach((m, j) => { m.scale.set(0.1, 0.55 * (0.8 + 0.3 * Math.sin(rt * 15 + j)), 0.1); m.position.y = 0.3; });
             it.crack.material.emissiveIntensity = c.warn ? 1 + Math.sin(rt * 20) : c.on ? 2 : 0.4;
           } else {
             it.beams.visible = c.on || (c.warn && Math.sin(rt * 30) > 0);
@@ -978,7 +1091,7 @@ export class Kitchen {
       } else if (h.kind === 'geyser') {
         const c = cycle(t, h.h.period, 1.7, h.h.phase);
         h.col.visible = c.on;
-        if (c.on) { h.col.scale.y = 2.4 * Math.min(1, c.k * 5); h.col.position.y = h.col.scale.y / 2; }
+        if (c.on) { h.col.scale.set(0.16, 2.2 * Math.min(1, c.k * 5), 0.16); h.col.position.y = h.col.scale.y / 2; }
         { const k = c.warn ? 1 + Math.sin(rt * 20) * 0.2 : 1; h.g.children[1].scale.set(0.28 * k, 0.02, 0.28 * k); }
       }
     }
@@ -1051,6 +1164,7 @@ export class Kitchen {
       if (!g) { g = this.makeMonkey(); this.monkeyPool[i] = g; }
       g.visible = true;
       g.position.set(this.wx(m.x), m.z, this.wz(m.y));
+      this.swayPoint(g.position);
       g.rotation.y = Math.atan2(m.fx || 0, m.fy || 1);
       g.userData.vine.visible = m.z > 0.05 || m.st === 'leave' || m.st === 'drop';
       g.userData.vine.position.y = 3 + 0.0;
@@ -1069,13 +1183,15 @@ export class Kitchen {
   setHighlight(target) {
     if (!target) { this.highlight.visible = false; return; }
     this.highlight.visible = true;
+    const hp = target[2] != null && this.moverMeshes[target[2]] ? this.home(this.moverMeshes[target[2]].m.x0) : this.home(target[0]);
+    if (this.highlight.parent !== hp) hp.add(this.highlight);
     if (target[2] != null && this.moverMeshes[target[2]]) { const p = this.moverMeshes[target[2]].g.position; this.highlight.position.set(p.x, CH + 0.02, p.z); return; }
     const tl = tileAt(this.L, target[0], target[1]);
     this.highlight.position.set(this.cx(target[0]), (tl.st === 'oven' ? 1.15 : tl.st === 'trash' ? 0.9 : CH) + 0.02, this.cz(target[1]));
   }
 
   /** World position of a tile (for popups). */
-  tilePos(x, y, h = 1.2) { const v = new THREE.Vector3(this.cx(x), h, this.cz(y)); return this.root.localToWorld(v); }
+  tilePos(x, y, h = 1.2) { const v = new THREE.Vector3(this.cx(x), h, this.cz(y)); return this.root.localToWorld(this.swayPoint(v)); }
 }
 
 function roundRect(w, h, r) {
@@ -1124,3 +1240,5 @@ function puddleTex() {
     for (let i = 0; i < 14; i++) { g.beginPath(); g.arc(w / 2, h / 2, 18 + i * 8 + Math.random() * 4, Math.random() * 6, Math.random() * 6 + 2); g.stroke(); }
   });
 }
+
+Object.assign(Kitchen.prototype, treehouse);
