@@ -26,10 +26,15 @@ export class Chef {
     this.phase = Math.random() * 10;
     this.build(outfit, color, skin);
     this.name = name;
+    // a proper cleaver: wide steel blade, bolster and wooden handle
     this.knife = new THREE.Group();
-    this.knife.add(part(box(), mat(0xdfe6ee, { metal: 0.8, rough: 0.25 }), [0, 0, 0.09], [0.012, 0.05, 0.14]));
-    this.knife.add(part(box(), mat(0x3a2a1a), [0, 0, -0.02], [0.02, 0.035, 0.08]));
+    this.knife.add(part(box(), mat(0xe6edf4, { metal: 0.9, rough: 0.18 }), [0, 0.02, 0.17], [0.014, 0.13, 0.22]));
+    this.knife.add(part(box(), mat(0x9aa4ae, { metal: 0.9, rough: 0.3 }), [0, 0.085, 0.17], [0.016, 0.012, 0.22]));
+    this.knife.add(part(cyl(8), mat(0x8a8f96, { metal: 0.8 }), [0, 0, 0.05], [0.02, 0.03, 0.02], [Math.PI / 2, 0, 0]));
+    this.knife.add(part(box(), mat(0x5a3418, { rough: 0.6 }), [0, 0, -0.03], [0.03, 0.035, 0.12]));
     this.knife.visible = false;
+    this.knife.scale.setScalar(1.5);
+    this.land = 0; this.prevZ = 0; this.prevAir = false; this.blinkT = 2 + Math.random() * 3;
     this.handR.add(this.knife);
     this.holdAnchor = new THREE.Group();
     this.holdAnchor.position.set(0, 0.5, 0.36);
@@ -70,9 +75,12 @@ export class Chef {
     this.head = head;
     head.add(part(sph(24), skin, [0, 0, 0], [0.2, 0.19, 0.19]));
     const eyeW = mat(0xffffff, { rough: 0.3 }), eyeB = mat(0x1a1a22, { rough: 0.2 });
+    this.eyes = [];
     for (const s of [-1, 1]) {
-      head.add(part(sph(12), eyeW, [s * 0.07, 0.03, 0.155], [0.045, 0.055, 0.03]));
-      head.add(part(sph(10), eyeB, [s * 0.07, 0.03, 0.18], [0.025, 0.033, 0.015]));
+      const eg = new THREE.Group(); eg.position.set(s * 0.07, 0.03, 0);
+      eg.add(part(sph(12), eyeW, [0, 0, 0.155], [0.045, 0.055, 0.03]));
+      eg.add(part(sph(10), eyeB, [0, 0, 0.18], [0.025, 0.033, 0.015]));
+      head.add(eg); this.eyes.push(eg);
     }
     head.add(part(sph(10), mat(shade(SKIN[skinIdx % SKIN.length], -0.12)), [0, -0.02, 0.19], [0.035, 0.03, 0.03]));
     head.add(part(box(), mat(0x6a2a2a), [0, -0.09, 0.17], [0.07, 0.015, 0.01]));
@@ -164,44 +172,97 @@ export class Chef {
    * s = { speed, vx, vy, z, act, holding, ko, falling, dt, t }
    */
   animate(s) {
-    const dt = s.dt;
-    const sp = Math.min(1, s.speed / 4.4);
-    this.phase += dt * (6 + sp * 8) * (sp > 0.05 ? 1 : 0.3);
-    const ph = this.phase;
+    const dt = Math.min(0.05, s.dt);
+    const sp = Math.min(1.2, s.speed / 4.4);
+    const moving = sp > 0.08;
     const air = s.z > 0.02;
-    const bob = sp > 0.05 && !air ? Math.abs(Math.sin(ph)) * 0.06 * sp : Math.sin(s.t * 2) * 0.01;
-    this.body.position.y = bob;
-    this.body.rotation.x = sp * 0.18 * (air ? 0.4 : 1);
-    this.body.rotation.z = Math.sin(ph) * 0.05 * sp;
-    // feet
-    const stride = air ? 0 : Math.sin(ph) * 0.14 * sp;
-    this.footL.position.set(-0.11, Math.max(0, -Math.sin(ph)) * 0.06 * sp + (air ? 0.06 : 0), stride);
-    this.footR.position.set(0.11, Math.max(0, Math.sin(ph)) * 0.06 * sp + (air ? 0.06 : 0), -stride);
-    // hands
-    const hl = this.handL.position, hr = this.handR.position;
-    this.knife.visible = false;
-    if (s.act === 'chop') {
-      const c = Math.abs(Math.sin(s.t * 14));
-      hl.set(-0.14, 0.48, 0.34);
-      hr.set(0.1, 0.48 + c * 0.2, 0.36);
-      this.knife.visible = true;
-      this.knife.rotation.x = -0.4 - c * 0.6;
-      this.body.rotation.x = 0.2;
-    } else if (s.act === 'wash') {
-      hl.set(-0.12 + Math.sin(s.t * 9) * 0.05, 0.5, 0.36 + Math.cos(s.t * 9) * 0.04);
-      hr.set(0.12 - Math.sin(s.t * 9) * 0.05, 0.5, 0.36 - Math.cos(s.t * 9) * 0.04);
-      this.body.rotation.x = 0.25;
-    } else if (s.holding) {
-      hl.set(-0.2, 0.5, 0.3);
-      hr.set(0.2, 0.5, 0.3);
+    const vz = (s.z - this.prevZ) / Math.max(1e-3, dt);
+    this.prevZ = s.z;
+    if (this.prevAir && !air) this.land = 1;          // just touched down: squash
+    this.prevAir = air;
+    this.land = Math.max(0, this.land - dt * 6);
+    // stride phase advances with distance travelled
+    this.phase += dt * (moving ? 5 + sp * 7.5 : 0);
+    const ph = this.phase;
+    const step = Math.sin(ph), stepAbs = Math.abs(Math.cos(ph));
+    const B = this.body;
+    // ---- body: bob twice per stride, lean into the run, sway side to side, squash & stretch
+    let bob = moving && !air ? stepAbs * 0.07 * sp : Math.sin(s.t * 2.2) * 0.008;
+    let sy = 1 + (moving && !air ? (stepAbs - 0.5) * 0.08 * sp : Math.sin(s.t * 2.2) * 0.015);
+    if (air) sy = 1 + Math.max(-0.12, Math.min(0.16, vz * 0.035));
+    sy -= this.land * 0.22;
+    const sxz = 1 / Math.sqrt(Math.max(0.6, sy));
+    B.scale.set(sxz, sy, sxz);
+    B.position.y = bob - this.land * 0.04;
+    B.rotation.x = (air ? 0.05 : sp * 0.22) + this.land * 0.15;
+    B.rotation.z = moving && !air ? step * 0.07 * sp : 0;
+    B.rotation.y = moving && !air ? step * 0.12 * sp : 0;
+    // ---- feet: lift on the forward swing, plant and push back
+    const lift = (v) => Math.max(0, v) * 0.11 * Math.min(1, sp);
+    const stride = 0.17 * Math.min(1, sp);
+    if (air) {
+      const tuck = vz > 0 ? 0.12 : 0.05;
+      this.footL.position.set(-0.11, tuck, 0.06); this.footR.position.set(0.11, tuck * 0.8, -0.04);
+      this.footL.rotation.x = -0.5; this.footR.rotation.x = 0.3;
+    } else if (moving) {
+      this.footL.position.set(-0.11, lift(Math.cos(ph)), step * stride);
+      this.footR.position.set(0.11, lift(-Math.cos(ph)), -step * stride);
+      this.footL.rotation.x = -Math.cos(ph) * 0.5; this.footR.rotation.x = Math.cos(ph) * 0.5;
     } else {
-      const sw = Math.sin(ph) * 0.16 * sp;
-      hl.set(-0.29, 0.38 + bob, sw);
-      hr.set(0.29, 0.38 + bob, -sw);
+      this.footL.position.set(-0.11, 0, 0.02); this.footR.position.set(0.11, 0, -0.02);
+      this.footL.rotation.x = this.footR.rotation.x = 0;
     }
-    if (air) { hl.y += 0.15; hr.y += 0.15; }
-    this.holdAnchor.position.set(0, 0.52 + bob, 0.38);
-    // knocked out: spin + shrink handled by caller via root
-    this.head.rotation.y = Math.sin(s.t * 0.7 + this.phase * 0.01) * 0.08;
+    if (this.land > 0) { this.footL.position.x = -0.14; this.footR.position.x = 0.14; }
+    // ---- hands
+    const hl = this.handL.position, hr = this.handR.position;
+    const by = bob + 0.0;
+    this.knife.visible = false;
+    let headDown = 0;
+    if (s.act === 'chop') {
+      // raise the cleaver high, then slam it down: impact at the cycle wrap (matches the kitchen's hit clock)
+      const u = (s.t * 4.5) % 1;
+      const up = u < 0.72 ? Math.sin((u / 0.72) * Math.PI / 2) : 1 - (u - 0.72) / 0.28;
+      const hit = u > 0.9 || u < 0.08 ? 1 : 0;
+      hl.set(-0.15, 0.5 + hit * 0.01, 0.36);
+      hr.set(0.2 + up * 0.12, 0.55 + up * 0.72, 0.32 - up * 0.06);
+      this.knife.visible = true;
+      this.knife.rotation.set(-0.2 - up * 1.3 + (1 - up) * 0.9, 0, 0);
+      B.rotation.x = 0.28 + up * -0.1 + hit * 0.06;
+      B.position.y = by - hit * 0.03;
+      B.scale.set(1.0 + hit * 0.04, 1 - hit * 0.06, 1.0 + hit * 0.04);
+      headDown = 0.25;
+    } else if (s.act === 'wash') {
+      const w = s.t * 11;
+      hl.set(-0.13 + Math.sin(w) * 0.07, 0.42 + Math.abs(Math.cos(w)) * 0.03, 0.4 + Math.cos(w) * 0.06);
+      hr.set(0.13 - Math.sin(w) * 0.07, 0.42 + Math.abs(Math.sin(w)) * 0.03, 0.4 - Math.cos(w) * 0.06);
+      B.rotation.x = 0.32; B.rotation.z = Math.sin(w) * 0.04;
+      headDown = 0.3;
+    } else if (s.act === 'spray') {
+      const j = Math.sin(s.t * 40) * 0.012;
+      hl.set(-0.12, 0.5 + j, 0.4); hr.set(0.12, 0.5 - j, 0.38);
+      B.rotation.x = -0.05; B.position.y = by + j;
+    } else if (s.holding) {
+      const c = moving ? Math.sin(ph * 2) * 0.02 : Math.sin(s.t * 2.2) * 0.008;
+      hl.set(-0.2, 0.5 + c + by, 0.3); hr.set(0.2, 0.5 + c + by, 0.3);
+    } else {
+      // arms swing opposite to the legs
+      const sw = moving ? step * 0.2 * Math.min(1, sp) : 0;
+      hl.set(-0.3, 0.38 + by + (moving ? Math.max(0, -step) * 0.05 : Math.sin(s.t * 2.2) * 0.01), -sw);
+      hr.set(0.3, 0.38 + by + (moving ? Math.max(0, step) * 0.05 : Math.sin(s.t * 2.2 + 1) * 0.01), sw);
+    }
+    if (air) {
+      // arms fling up while rising, spread out while falling
+      const up = vz > 0 ? 0.32 : 0.18;
+      hl.y += up; hr.y += up; hl.x -= 0.06; hr.x += 0.06;
+    }
+    if (this.land > 0) { hl.y -= this.land * 0.08; hr.y -= this.land * 0.08; }
+    this.holdAnchor.position.set(0, 0.52 + by, 0.38);
+    // ---- head: lags the bob, looks at work, blinks
+    this.head.rotation.x = headDown + (moving ? -stepAbs * 0.05 : 0);
+    this.head.rotation.y = s.act ? 0 : Math.sin(s.t * 0.7 + this.phase * 0.01) * 0.12;
+    this.blinkT -= dt;
+    const blink = this.blinkT < 0.12 ? 0.1 : 1;
+    if (this.blinkT < 0) this.blinkT = 2 + Math.random() * 3.5;
+    this.eyes.forEach((e) => { e.scale.y = blink; });
   }
 }

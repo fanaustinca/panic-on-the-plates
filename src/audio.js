@@ -60,6 +60,7 @@ export const sfx = {
   ko() { tone(600, 0.5, { type: 'triangle', vol: 0.18, slide: 0.25 }); noise(0.3, { vol: 0.15, freq: 300 }); },
   splash() { noise(0.6, { vol: 0.3, freq: 800, sweep: 0.3 }); },
   strike() { noise(0.5, { vol: 0.45, freq: 200, q: 0.5, type: 'lowpass' }); tone(80, 0.4, { vol: 0.3, slide: 0.5 }); },
+  cannonFire() { noise(0.9, { vol: 0.22, freq: 160, q: 0.4, type: 'lowpass', sweep: 0.5 }); tone(55, 0.6, { vol: 0.22, slide: 0.6 }); },
   thunder() { noise(1.4, { vol: 0.5, freq: 300, q: 0.3, type: 'lowpass', sweep: 0.3 }); },
   whoosh() { noise(1.2, { vol: 0.2, freq: 400, q: 0.6, sweep: 4 }); },
   lever() { tone(200, 0.06, { type: 'square', vol: 0.1 }); noise(0.1, { vol: 0.15, freq: 1800, at: 0.04 }); },
@@ -74,8 +75,8 @@ export const sfx = {
 
 // ---------------------------------------------------------------- music
 // A small step sequencer. In the kitchen it is deliberately tense: minor-key driving bass,
-// a 16th-note ostinato, backbeat and hats. setIntensity() adds layers and speeds it up as the
-// clock runs down, orders go critical or a fire breaks out.
+// a 16th-note ostinato, backbeat and hats. setIntensity() adds layers as orders go critical or a
+// fire breaks out, and the last 30 s switch to a heavier arrangement of the same tune (same tempo).
 const SCALES = {
   pirate: [0, 2, 3, 5, 7, 8, 10], glacier: [0, 2, 3, 7, 8], volcano: [0, 1, 4, 5, 7, 8, 10], space: [0, 2, 3, 6, 7, 9, 10],
   clouds: [0, 2, 3, 5, 7, 9, 10], jungle: [0, 3, 5, 6, 7, 10], factory: [0, 1, 3, 5, 6, 8, 10], library: [0, 2, 3, 5, 7, 8, 11], lobby: [0, 2, 4, 7, 9],
@@ -103,21 +104,49 @@ export function playMusic(world, bpm = 132) {
   const ost = Array.from({ length: 16 }, (_, i) => [0, 2, 4, 2, 0, 4, 2, 4][i % 8] + (r() < 0.25 ? 1 : 0));
   const mel = Array.from({ length: 64 }, () => (r() < 0.55 ? Math.floor(r() * 7) : null));
   let i = 0, next = ctx.currentTime + 0.1;
+  let finalArr = false; // the "final 30 s" arrangement only switches in on a bar line
   const id = setInterval(() => {
-    const tempo = bpm * (calm ? 1 : 1 + mix.level * 0.14 + (mix.final ? 0.12 : 0));
-    const step = 60 / tempo / 4; // 16th notes
+    // tempo stays fixed: tension comes from the arrangement, never from speeding the song up
+    const step = 60 / bpm / 4; // 16th notes
     while (next < ctx.currentTime + 0.2) {
       const at = next - ctx.currentTime;
       const b16 = i % 16, bar = Math.floor(i / 16) % 4, chord = prog[bar];
       const bus = musicBus;
+      if (b16 === 0 && !calm && mix.final !== finalArr) {
+        finalArr = mix.final;
+        if (finalArr) { noise(1.6, { vol: 0.16, freq: 5000, q: 0.4, at, bus }); tone(40, 1.2, { vol: 0.35, slide: 0.5, at, bus }); }
+      }
       if (calm) {
         if (b16 % 8 === 0) tone(hz(root - 12 + deg(chord)), step * 7, { type: 'triangle', vol: 0.2, at, bus });
         if (b16 % 4 === 2) noise(0.03, { vol: 0.03, freq: 9000, type: 'highpass', at, bus });
         if (b16 % 2 === 0 && mel[i % 64] != null) tone(hz(root + 12 + deg(chord + mel[i % 64])), step * 1.8, { type: 'triangle', vol: 0.06, at, bus });
         if (b16 === 0 || b16 === 10) tone(55, 0.14, { vol: 0.18, slide: 0.5, at, bus });
+      } else if (finalArr) {
+        // ---- FINAL 30 SECONDS: same tune and tempo, rearranged darker and heavier ----
+        // war drums: syncopated low toms + kick on every beat
+        if (b16 % 4 === 0) tone(58, 0.2, { vol: 0.38, slide: 0.35, at, bus });
+        if ([3, 6, 10, 14].includes(b16)) tone(b16 === 14 ? 120 : 92, 0.18, { vol: 0.2, slide: 0.55, at, bus });
+        // snare on the backbeat, rolling into every 4th bar
+        if (b16 === 4 || b16 === 12 || (bar === 3 && b16 >= 8)) noise(0.12, { vol: bar === 3 && b16 >= 8 ? 0.06 + (b16 - 8) * 0.012 : 0.14, freq: 2000, q: 0.8, at, bus });
+        noise(0.025, { vol: b16 % 2 ? 0.05 : 0.025, freq: 10000, type: 'highpass', at, bus });
+        // bass: relentless 16th pedal on the chord root, octave jump on the offbeats
+        tone(hz(root - 24 + deg(chord) + (b16 % 4 === 2 ? 12 : 0)), step * 0.85, { type: 'sawtooth', vol: 0.1, at, bus });
+        // dissonant string pad: chord root against a minor second, swelling each bar
+        if (b16 === 0) { tone(hz(root + deg(chord)), step * 16, { type: 'sawtooth', vol: 0.03, at, bus }); tone(hz(root + deg(chord) + 1), step * 16, { type: 'sawtooth', vol: 0.022, at, bus }); tone(hz(root + 12 + deg(chord + 2)), step * 16, { type: 'triangle', vol: 0.03, at, bus }); }
+        // the same ostinato, an octave up and doubled a hair sharp so it shimmers
+        const on = hz(root + 12 + deg(chord + ost[b16]));
+        tone(on, step * 0.7, { type: LEAD[world], vol: 0.04, at, bus });
+        tone(on * 1.006, step * 0.7, { type: 'square', vol: 0.018, at, bus });
+        // the lead melody returns as brass-like stabs
+        if (b16 % 2 === 0 && mel[i % 64] != null) tone(hz(root + 12 + deg(chord + mel[i % 64])), step * 1.2, { type: 'sawtooth', vol: 0.045, at, bus });
+        if (mix.panic && b16 % 4 === 2) tone(hz(root + 24 + 1), step * 0.6, { type: 'square', vol: 0.03, at, bus });
+        if (mix.fire && b16 === 0) tone(700, step * 6, { type: 'triangle', vol: 0.045, slide: 1.5, at, bus });
+        // ticking clock on every 8th and a riser into each 4-bar phrase
+        if (b16 % 2 === 0) tone(b16 % 4 === 0 ? 2400 : 1800, 0.02, { type: 'square', vol: 0.045, at, bus });
+        if (bar === 3 && b16 === 0) noise(step * 16, { vol: 0.06, freq: 500, q: 2, sweep: 8, at, bus });
       } else {
-        // kick: four on the floor, doubled in the final stretch
-        if (b16 % 4 === 0 || (mix.final && b16 % 4 === 2 && b16 > 8)) tone(62, 0.16, { vol: 0.34, slide: 0.4, at, bus });
+        // kick: four on the floor
+        if (b16 % 4 === 0) tone(62, 0.16, { vol: 0.34, slide: 0.4, at, bus });
         // driving 8th-note bass, octave jumps
         if (b16 % 2 === 0) tone(hz(root - 24 + deg(chord) + (b16 % 4 === 2 ? 12 : 0)), step * 1.6, { type: 'sawtooth', vol: 0.11, at, bus });
         // snare backbeat
@@ -133,9 +162,6 @@ export function playMusic(world, bpm = 132) {
         if (mix.panic && b16 % 4 === 0) tone(hz(root + 24 + 1), step * 0.7, { type: 'square', vol: 0.03, at, bus });
         // fire: alarm whoop every bar
         if (mix.fire && b16 === 0) tone(700, step * 6, { type: 'triangle', vol: 0.05, slide: 1.5, at, bus });
-        // final 30 s: clock tick on every beat + rising riser each 4 bars
-        if (mix.final && b16 % 4 === 0) tone(2400, 0.02, { type: 'square', vol: 0.05, at, bus });
-        if (mix.final && bar === 3 && b16 === 0) noise(step * 16, { vol: 0.05, freq: 500, q: 2, sweep: 8, at, bus });
       }
       next += step; i++;
     }

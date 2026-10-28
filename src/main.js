@@ -1,13 +1,14 @@
 // App controller: renderer + main loop, menus, lobby membership/voting over the Room, and matches.
 import * as THREE from 'three';
 import './style.css';
-import { WORLDS, MAX_PLAYERS, OUTFITS } from './config.js';
+import { WORLDS, MAX_PLAYERS, OUTFITS, cleanUpg } from './config.js';
+import { MP_LEVEL } from './levels.js';
 import { Room, isLocalNet } from './net.js';
 import { Game } from './game.js';
 import { UI } from './ui.js';
 import { Input } from './input.js';
 import { LobbyScene } from './render/lobby3d.js';
-import { loadSave, writeSave, recordResult, levelUnlocked, outfitUnlocked } from './save.js';
+import { loadSave, writeSave, recordResult, levelUnlocked, outfitUnlocked, buyUpgrade } from './save.js';
 import { initAudio, setVolumes, playMusic, stopMusic, sfx } from './audio.js';
 
 class App {
@@ -82,7 +83,9 @@ class App {
   }
 
   // ------------------------------------------------------------ profile / members
-  profile() { const s = this.save; return { name: s.name || 'Chef', outfit: outfitUnlocked(s, s.outfit) ? s.outfit : 'chef', color: s.color, skin: s.skin }; }
+  profile() { const s = this.save; return { name: s.name || 'Chef', outfit: outfitUnlocked(s, s.outfit) ? s.outfit : 'chef', color: s.color, skin: s.skin, upg: cleanUpg(s.upg) }; }
+  /** In a room you pick worlds (any world, its multiplayer kitchen); solo is the campaign. */
+  get multi() { return !!this.room; }
   me() { return this.members.get(this.selfId); }
   memberList() { return [...this.members.values()].sort((a, b) => (b.host ? 1 : 0) - (a.host ? 1 : 0) || a.joined - b.joined); }
 
@@ -109,8 +112,34 @@ class App {
   }
   previewWorld(wi) { this.lobby3d.setTheme(wi); }
 
+  buy(id) {
+    if (!buyUpgrade(this.save, id)) return false;
+    sfx.star(2);
+    this.setProfile({ upg: cleanUpg(this.save.upg) });
+    return true;
+  }
+
+  /** Multiplayer: every cook's world vote (null = no vote). */
+  worldVotes() { return this.memberList().map((m, i) => ({ id: m.id, name: m.name, slot: i, world: m.vote != null && /^\d$/.test(String(m.vote)) ? +m.vote : null })); }
+
+  /** Host: roll the dice between the cooks' world picks, show it to everyone, then start. */
+  rollAndStart() {
+    if (this.rolling) return;
+    const votes = this.worldVotes().filter((v) => v.world != null);
+    const entries = votes.length ? votes : [{ id: null, name: 'The kitchen', slot: -1, world: Math.floor(Math.random() * WORLDS.length) }];
+    const win = Math.floor(Math.random() * entries.length);
+    const msg = { k: 'dice', entries, win, face: 1 + Math.floor(Math.random() * 6) };
+    if (this.room) this.room.broadcast(msg);
+    this.rolling = true;
+    this.ui.diceRoll(msg, () => { this.rolling = false; if (this.mode === 'lobby') this.startMatch(`${entries[win].world}-${MP_LEVEL}`); });
+  }
+
   /** Most-voted level (ties: earliest vote order, falling back to host's pick). */
   pickLevel() {
+    if (this.multi) {
+      const v = this.worldVotes().find((q) => q.world != null && this.members.get(q.id)?.host) || this.worldVotes().find((q) => q.world != null);
+      return `${v ? v.world : 0}-${MP_LEVEL}`;
+    }
     const tally = new Map();
     for (const m of this.memberList()) if (m.vote) tally.set(m.vote, (tally.get(m.vote) || 0) + 1);
     let best = null, bn = 0;
@@ -198,7 +227,7 @@ class App {
     room.onJoin = (id, hello) => {
       if (this.members.size >= MAX_PLAYERS || this.mode === 'game') { room.send(id, { k: 'full', msg: this.mode === 'game' ? 'That kitchen is mid-service' : 'That kitchen is full' }); setTimeout(() => room.kick(id), 200); return; }
       const outfit = OUTFITS.some((o) => o.id === hello.outfit) ? hello.outfit : 'chef';
-      this.members.set(id, { id, name: String(hello.name || 'Chef').slice(0, 14), outfit, color: hello.color | 0, skin: hello.skin | 0, host: false, ready: false, vote: null, joined: joinN++ });
+      this.members.set(id, { id, name: String(hello.name || 'Chef').slice(0, 14), outfit, color: hello.color | 0, skin: hello.skin | 0, upg: cleanUpg(hello.upg), host: false, ready: false, vote: null, joined: joinN++ });
       room.send(id, { k: 'welcome', you: id });
       this.ui.toast(`${this.members.get(id).name} joined the kitchen`);
       sfx.order();
@@ -215,8 +244,8 @@ class App {
     room.onMessage = (from, m) => {
       const mem = this.members.get(from);
       if (!mem) return;
-      if (m.k === 'prof') { for (const k of ['outfit', 'color', 'skin']) if (k in m) mem[k] = m[k]; this.lobbyChanged(); }
-      else if (m.k === 'vote') { mem.vote = m.key; this.lobbyChanged(); }
+      if (m.k === 'prof') { for (const k of ['outfit', 'color', 'skin']) if (k in m) mem[k] = m[k]; if ('upg' in m) mem.upg = cleanUpg(m.upg); this.lobbyChanged(); }
+      else if (m.k === 'vote') { mem.vote = /^\d$/.test(String(m.key)) ? String(m.key) : null; this.lobbyChanged(); }
       else if (m.k === 'ready') { mem.ready = !!m.v; this.lobbyChanged(); }
       else if (this.game) this.game.onMessage(from, m);
     };
@@ -234,7 +263,8 @@ class App {
         this.members = new Map(m.members.map((x) => [x.id, x]));
         if (!this.members.has(this.selfId) && mine) this.members.set(this.selfId, mine);
         if (this.mode === 'lobby') { this.ui.renderLobby(); this.refresh3d(); }
-      } else if (m.k === 'start') this.beginMatch(m.level, m.roster, m.seed);
+      } else if (m.k === 'start') { this.ui.closeDice(); this.beginMatch(m.level, m.roster, m.seed); }
+      else if (m.k === 'dice') this.ui.diceRoll(m, () => {});
       else if (m.k === 'end') this.showResults(m.res);
       else if (m.k === 'tolobby') this.backToLobby();
       else if (m.k === 'full' || m.k === 'kicked') { this.ui.toast(m.msg || 'Removed from room'); this.teardown(); this.showTitle(); }
@@ -246,8 +276,9 @@ class App {
 
   startMatch(level) {
     if (!this.isHost) return;
+    if (!level && this.multi) { this.rollAndStart(); return; }
     const key = level || this.pickLevel();
-    const roster = this.memberList().map((m) => ({ id: m.id, name: m.name, outfit: m.outfit, color: m.color, skin: m.skin }));
+    const roster = this.memberList().map((m) => ({ id: m.id, name: m.name, outfit: m.outfit, color: m.color, skin: m.skin, upg: cleanUpg(m.upg) }));
     const seed = (Math.random() * 1e9) | 0;
     if (this.room) this.room.broadcast({ k: 'start', level: key, roster, seed });
     this.beginMatch(key, roster, seed);
@@ -255,6 +286,7 @@ class App {
 
   beginMatch(level, roster, seed) {
     this.closeResults();
+    this.ui.closeDice();
     if (this.game) { this.game.dispose(); this.game = null; }
     this.mode = 'game';
     if (this.isHost) this.lobbyChanged();
@@ -272,9 +304,10 @@ class App {
 
   showResults(res) {
     if (this.resultsEl) return;
-    recordResult(this.save, res.level, res.stars, res.score);
+    res.coins = recordResult(this.save, res.level, res.stars, res.score);
+    res.wallet = this.save.coins;
     const [wi, li] = res.level.split('-').map(Number);
-    const nextKey = li < 9 ? `${wi}-${li + 1}` : wi < 7 ? `${wi + 1}-0` : null;
+    const nextKey = li >= MP_LEVEL ? null : li < 9 ? `${wi}-${li + 1}` : wi < 7 ? `${wi + 1}-0` : null;
     this.resultsEl = this.ui.showResults(res, {
       isHost: this.isHost,
       hasNext: !!nextKey && levelUnlocked(this.save, ...nextKey.split('-').map(Number)),

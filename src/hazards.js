@@ -92,6 +92,20 @@ export function cuckooAt(L, t) {
   return null;
 }
 
+/** Moving counter's left edge (tile units) at time t: pause, glide across, pause, glide back. */
+export function moverX(m, t) {
+  const c = frac(t / m.period + m.phase);
+  const ease = (k) => k * k * (3 - 2 * k);
+  let k;
+  if (c < 0.15) k = 0; else if (c < 0.5) k = ease((c - 0.15) / 0.35); else if (c < 0.65) k = 1; else k = 1 - ease((c - 0.65) / 0.35);
+  return m.x0 + (m.x1 - m.x0) * k;
+}
+/** Is the mover about to set off (for the warning lights)? */
+export function moverWarn(m, t) {
+  const c = frac(t / m.period + m.phase);
+  return (c > 0.1 && c < 0.15) || (c > 0.6 && c < 0.65) || (c >= 0.15 && c < 0.5) || (c >= 0.65);
+}
+
 /** Is a blocking (non-walkable) tile at grid (x,y) at time t? */
 export function blockedAt(L, x, y, t) {
   const tl = tileAt(L, x, y);

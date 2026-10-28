@@ -3,7 +3,7 @@
 import { serve, launch, openPage, shots } from './harness.mjs';
 import path from 'node:path';
 
-const levels = process.argv.slice(2).filter((a) => /^\d-\d$/.test(a));
+const levels = process.argv.slice(2).filter((a) => /^\d-\d+$/.test(a));
 const list = levels.length ? levels : ['0-0', '1-3', '2-5', '3-4', '4-6', '5-6', '6-5', '7-8'];
 const menus = !levels.length || process.argv.includes('menus');
 const srv = await serve();
@@ -25,7 +25,7 @@ if (menus) {
   await snap('lobby-outfit.png');
 }
 for (const lv of list) {
-  await page.evaluate((lv) => { if (!PANIC.app.members.size) PANIC.app.solo(); PANIC.app.startMatch(lv); }, lv);
+  await page.evaluate((lv) => { if (!PANIC.app.members || !PANIC.app.members.size) PANIC.app.solo(); PANIC.app.startMatch(lv); }, lv);
   await sleep(400);
   if (menus && lv === list[0]) await snap(`countdown-${lv}.png`);
   // skip the countdown, then let the kitchen run a few seconds with some activity

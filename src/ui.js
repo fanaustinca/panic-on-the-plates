@@ -1,10 +1,11 @@
 // DOM UI: title, lobby (outfits, colours, level vote), modals, the in-game HUD and results.
 import * as THREE from 'three';
-import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRecipes, LEVEL_RECIPES, VERSION } from './config.js';
-import { buildLevel, levelTitle } from './levels.js';
+import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRecipes, LEVEL_RECIPES, VERSION, UPGRADES, UPGRADE_MAX } from './config.js';
+import { buildLevel, levelTitle, MP_LEVEL } from './levels.js';
 import { envAt, cuckooAt } from './hazards.js';
 import { ingIcon, dishIcon, chefIcon } from './render/thumbs.js';
-import { loadSave, writeSave, totalStars, worldUnlocked, levelUnlocked, outfitUnlocked, worldNeed } from './save.js';
+import { loadSave, writeSave, totalStars, worldUnlocked, levelUnlocked, outfitUnlocked, worldNeed, upgradeCost } from './save.js';
+const lvLabel = (wi, li) => (li === MP_LEVEL ? `${wi + 1}-MP` : `${wi + 1}-${li + 1}`);
 import { sfx } from './audio.js';
 
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
@@ -30,6 +31,8 @@ export const ICON = {
   oven: '<svg viewBox="0 0 24 24" fill="#fff"><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="6" y="9" width="12" height="9" rx="1.5" fill="#d86a1a"/></svg>',
   fire: '<svg viewBox="0 0 24 24" fill="#ff6a2a"><path d="M12 2c1 4 6 6 6 12a6 6 0 01-12 0c0-3 2-5 3-6 0 2 1 3 2 3 0-3-1-6 1-9z"/></svg>',
   wind: '<svg viewBox="0 0 24 24" fill="none" stroke="#9fd8ff" stroke-width="2.6" stroke-linecap="round"><path d="M3 8h11a3 3 0 10-3-3M3 13h16a3 3 0 11-3 3M3 18h8"/></svg>',
+  up: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l8 9h-5v9H9v-9H4z"/></svg>',
+  dice: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="4"/><g fill="#1d1530"><circle cx="8" cy="8" r="1.7"/><circle cx="16" cy="16" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="16" cy="8" r="1.7"/><circle cx="8" cy="16" r="1.7"/></g></svg>',
   warn: '<svg viewBox="0 0 24 24" fill="#ffcf3a"><path d="M12 2l10.5 19h-21z"/><path d="M11 9h2v6h-2zM11 17h2v2h-2z" fill="#1d1530"/></svg>',
 };
 const METHOD_ICON = { chop: ['knife', '#e8a43a'], pan: ['pan', '#e8553a'], pot: ['pot', '#3a8ae8'], oven: ['oven', '#9a5ad8'] };
@@ -217,12 +220,13 @@ export class UI {
         <div class="lobby-head">
           <button class="btn ghost small" id="leave">${ICON.home} Leave</button>
           <h2 id="lt">Kitchen Lobby</h2>
+          <div class="panel wallet" id="wallet"></div>
           <div class="panel code-box" id="codebox"></div>
         </div>
         <div class="panel players" id="players"></div>
         <div class="passthrough"></div>
         <div class="panel side">
-          <div class="tabs"><button data-t="outfit">Outfit</button><button data-t="level">Vote Level</button></div>
+          <div class="tabs"><button data-t="outfit">Outfit</button><button data-t="upg">Upgrades</button><button data-t="level" id="votetab">Vote Level</button></div>
           <div class="scroll" id="side"></div>
         </div>
         <div class="lobby-foot">
@@ -245,6 +249,8 @@ export class UI {
     const app = this.app, v = this.lobbyEl;
     const members = app.memberList();
     const room = app.room;
+    v.querySelector('#wallet').innerHTML = `<span class="coin">$</span><b>${app.save.coins}</b>`;
+    v.querySelector('#votetab').textContent = app.multi ? 'Vote World' : 'Choose Level';
     v.querySelector('#lt').textContent = room ? `${members.find((m) => m.host)?.name || 'Host'}'s Kitchen` : 'Solo Kitchen';
     v.querySelector('#codebox').innerHTML = room
       ? `<span style="color:var(--muted);font-size:13px">${room.isPublic ? 'PUBLIC ROOM' : 'ROOM CODE'}</span><span class="code">${esc(room.code)}</span><button class="btn small ghost" id="copy">Copy</button>`
@@ -254,8 +260,9 @@ export class UI {
     const P = v.querySelector('#players');
     P.innerHTML = `<h3>Cooks ${members.length}/4</h3>`;
     members.forEach((m, i) => {
-      const lv = m.vote ? m.vote.split('-').map(Number) : null;
-      P.appendChild(el(`<div class="pcard" style="--c:${hex(SLOT_COLORS[i])}"><img src="${chefIcon(m.outfit, COLORS[m.color % COLORS.length], m.skin)}" alt="" /><div><div class="nm">${esc(m.name)}${m.id === app.selfId ? ' <span style="color:var(--muted);font-size:12px">(you)</span>' : ''}</div><div class="sub">${m.host ? 'Host · ' : ''}${lv ? `Voted ${lv[0] + 1}-${lv[1] + 1}` : 'No vote yet'}</div></div><span class="rd ${m.ready || m.host ? 'on' : ''}">${m.host ? 'HOST' : m.ready ? 'READY' : 'WAITING'}</span></div>`));
+      const lv = m.vote != null && String(m.vote).includes('-') ? String(m.vote).split('-').map(Number) : null;
+      const wv = app.multi && m.vote != null && /^\d$/.test(String(m.vote)) ? WORLDS[+m.vote].name : null;
+      P.appendChild(el(`<div class="pcard" style="--c:${hex(SLOT_COLORS[i])}"><img src="${chefIcon(m.outfit, COLORS[m.color % COLORS.length], m.skin)}" alt="" /><div><div class="nm">${esc(m.name)}${m.id === app.selfId ? ' <span style="color:var(--muted);font-size:12px">(you)</span>' : ''}</div><div class="sub">${m.host ? 'Host · ' : ''}${wv ? `Wants ${esc(wv)}` : lv ? `Picked ${lv[0] + 1}-${lv[1] + 1}` : 'No vote yet'}</div></div><span class="rd ${m.ready || m.host ? 'on' : ''}">${m.host ? 'HOST' : m.ready ? 'READY' : 'WAITING'}</span></div>`));
     });
     for (let i = members.length; i < 4; i++) P.appendChild(el(`<div class="pcard empty">${room ? 'Waiting for a cook…' : 'Empty station'}</div>`));
     const me = app.me();
@@ -267,7 +274,11 @@ export class UI {
     const pick = app.pickLevel();
     const [pw, pl] = pick.split('-').map(Number);
     const notReady = members.filter((m) => !m.host && !m.ready).length;
-    v.querySelector('#status').innerHTML = app.isHost
+    const wv = app.multi ? app.worldVotes().filter((q) => q.world != null) : [];
+    if (app.multi) v.querySelector('#status').innerHTML = wv.length
+      ? `${ICON.dice.replace('<svg', '<svg width="18" height="18" style="vertical-align:-3px"')} Dice decides between: <b>${[...new Set(wv.map((q) => WORLDS[q.world].name))].map(esc).join(', ')}</b>${notReady ? ` · ${notReady} not ready` : ''}`
+      : `Vote for a world. The dice picks one cook's choice${notReady ? ` · ${notReady} not ready` : ''}`;
+    else v.querySelector('#status').innerHTML = app.isHost
       ? `Next up: <b>${pw + 1}-${pl + 1} ${esc(levelTitle(pw, pl))}</b>${notReady ? ` · ${notReady} cook${notReady > 1 ? 's' : ''} not ready` : ''}`
       : `Waiting for the host to start · Leading vote: <b>${pw + 1}-${pl + 1} ${esc(levelTitle(pw, pl))}</b>`;
     this.renderSide();
@@ -301,6 +312,8 @@ export class UI {
       side.appendChild(sk);
       return;
     }
+    if (this.tab === 'upg') { this.renderUpgrades(side); return; }
+    if (app.multi) { this.renderWorldVote(side); return; }
     // level vote
     const votes = new Map();
     app.memberList().forEach((m, i) => { if (m.vote) { if (!votes.has(m.vote)) votes.set(m.vote, []); votes.get(m.vote).push(i); } });
@@ -308,7 +321,7 @@ export class UI {
     WORLDS.forEach((w, wi) => {
       const un = worldUnlocked(s, wi);
       const got = Array.from({ length: 10 }, (_, li) => s.stars[`${wi}-${li}`] || 0).reduce((a, b) => a + b, 0);
-      const b = el(`<button class="wtab ${this.viewWorld === wi ? 'on' : ''} ${un ? '' : 'locked'}" style="--wc:${WORLD_COLOR[wi]}" title="${esc(w.name)}">${WORLD_ICON[wi]}<span>${esc(w.name.split(' ').slice(-1)[0])}</span><span class="stars">${un ? `${got}/30` : `${worldNeed(wi)} stars`}</span></button>`);
+      const b = el(`<button class="wtab ${this.viewWorld === wi ? 'on' : ''}" style="--wc:${WORLD_COLOR[wi]}" title="${esc(w.name)}">${WORLD_ICON[wi]}<span>${esc(w.name.split(' ').slice(-1)[0])}</span><span class="stars">${un ? `${got}/30` : `Lvl 1 open`}</span></button>`);
       b.addEventListener('click', () => { sfx.ui(); this.viewWorld = wi; this.renderSide(); app.previewWorld(wi); });
       wt.appendChild(b);
     });
@@ -322,7 +335,7 @@ export class UI {
       const vv = votes.get(key) || [];
       const b = el(`<button class="lvl ${me.vote === key ? 'on' : ''} ${un ? '' : 'locked'}"><span class="n">${wi + 1}-${li + 1}</span><span class="st">${[0, 1, 2].map((k) => `<span class="${k < st ? 'f' : ''}">★</span>`).join('')}</span><span class="votes">${vv.map((i) => `<i style="background:${hex(SLOT_COLORS[i])}"></i>`).join('')}</span></button>`);
       b.title = levelTitle(wi, li);
-      b.addEventListener('click', () => { if (!un) { sfx.wrong(); this.toast('Earn a star on the previous level first'); return; } sfx.ui(); app.vote(key); });
+      b.addEventListener('click', () => { if (!un) { sfx.wrong(); this.toast(worldUnlocked(s, wi) ? 'Earn a star on the previous level first' : `Collect ${worldNeed(wi)} stars to open the rest of ${WORLDS[wi].name}`); return; } sfx.ui(); app.vote(key); });
       lv.appendChild(b);
     }
     side.appendChild(lv);
@@ -342,8 +355,8 @@ export class UI {
     const L = game.L;
     const v = el(`
       <div class="hud">
-        <div class="panel score-card"><div class="lv">${game.L.world + 1}-${game.L.index + 1} · ${esc(L.name)}</div><div class="sc"><span class="coin">$</span><span id="score">0</span><span class="combo" id="combo"></span></div>
-          <div class="starbar"><div class="fill" id="sfill"></div>${L.stars.map((s, i) => `<span class="mk" id="mk${i}" style="left:${(s / L.stars[2]) * 100}%">${ICON.star}</span>`).join('')}</div></div>
+        <div class="panel score-card"><div class="lv">${lvLabel(game.L.world, game.L.index)} · ${esc(L.name)}</div><div class="sc"><span class="coin">$</span><span id="score">0</span><span class="combo" id="combo"></span></div>
+          <div class="starbar"><div class="fill" id="sfill"></div>${game.sim.stars.map((s, i) => `<span class="mk" id="mk${i}" style="left:${(s / game.sim.stars[2]) * 100}%">${ICON.star}</span>`).join('')}</div></div>
         <div class="panel timer" id="timer">${ICON.clock}<span id="time">0:00</span></div>
         <div class="orders" id="orders"></div>
         <div class="alert" id="alert"></div>
@@ -376,8 +389,8 @@ export class UI {
     if (sim.score !== this.lastScore) {
       this.lastScore = sim.score;
       v.querySelector('#score').textContent = sim.score;
-      v.querySelector('#sfill').style.width = Math.min(100, (sim.score / L.stars[2]) * 100) + '%';
-      L.stars.forEach((s, i) => v.querySelector('#mk' + i).classList.toggle('on', sim.score >= s));
+      v.querySelector('#sfill').style.width = Math.min(100, (sim.score / sim.stars[2]) * 100) + '%';
+      sim.stars.forEach((s, i) => v.querySelector('#mk' + i).classList.toggle('on', sim.score >= s));
     }
     v.querySelector('#combo').textContent = sim.combo > 1 ? `x${sim.combo} combo` : '';
     // timer
@@ -504,15 +517,92 @@ export class UI {
     });
   }
 
+  renderUpgrades(side) {
+    const app = this.app, s = app.save;
+    side.appendChild(el(`<h3>Upgrades <span class="wallet-inline"><span class="coin">$</span>${s.coins}</span></h3>`));
+    side.appendChild(el('<p style="margin:0 0 8px;color:var(--muted);font-size:13.5px">Earn coins every shift (score, stars and first-time stars). Upgrades work in solo and multiplayer.</p>'));
+    const list = el('<div class="upgrades"></div>');
+    for (const g of UPGRADES) {
+      const lvl = s.upg[g.id] | 0, cost = upgradeCost(s, g.id);
+      const can = cost != null && s.coins >= cost;
+      const row = el(`<div class="upg ${cost == null ? 'max' : ''}">
+        <div class="ui-ic">${UPG_ICON[g.id]}</div>
+        <div class="grow"><b>${esc(g.name)}</b><span>${esc(g.desc)}${lvl ? ` · +${Math.round(g.per * lvl * 100)}${esc(g.unit)}` : ''}</span>
+          <div class="pips">${Array.from({ length: UPGRADE_MAX }, (_, k) => `<i class="${k < lvl ? 'on' : ''}"></i>`).join('')}</div></div>
+        <button class="btn small ${can ? 'mint' : 'ghost'}" ${cost == null ? 'disabled' : ''}>${cost == null ? 'MAX' : `<span class="coin sm">$</span>${cost}`}</button></div>`);
+      row.querySelector('button').addEventListener('click', () => {
+        if (cost == null) return;
+        if (!app.buy(g.id)) { sfx.wrong(); this.toast(`Need ${cost - s.coins} more coins`); return; }
+        row.classList.add('bought');
+        this.toast(`${g.name} upgraded to tier ${s.upg[g.id]}`);
+      });
+      list.appendChild(row);
+    }
+    side.appendChild(list);
+  }
+
+  /** Multiplayer: vote for a world; every world is open and plays its multiplayer kitchen. */
+  renderWorldVote(side) {
+    const app = this.app, me = app.me();
+    side.appendChild(el('<h3>Vote for a world</h3>'));
+    side.appendChild(el(`<p style="margin:0 0 8px;color:var(--muted);font-size:13.5px">Every world is open in multiplayer. When the host starts, a dice roll picks one cook's vote, and you play that world's <b>multiplayer kitchen</b>: a bigger floor with extra stations.</p>`));
+    const votes = new Map();
+    app.worldVotes().forEach((q) => { if (q.world != null) { if (!votes.has(q.world)) votes.set(q.world, []); votes.get(q.world).push(q.slot); } });
+    const grid = el('<div class="wvote"></div>');
+    WORLDS.forEach((w, wi) => {
+      const vv = votes.get(wi) || [];
+      const b = el(`<button class="wcard ${String(me.vote) === String(wi) ? 'on' : ''}" style="--wc:${WORLD_COLOR[wi]}">${WORLD_ICON[wi]}<div class="t"><b>${esc(w.name)}</b><span>${esc(levelTitle(wi, MP_LEVEL))}</span></div><span class="votes">${vv.map((i) => `<i style="background:${hex(SLOT_COLORS[i])}"></i>`).join('')}</span></button>`);
+      b.title = MECHANICS[wi];
+      b.addEventListener('click', () => { sfx.ui(); app.vote(String(wi)); app.previewWorld(wi); });
+      grid.appendChild(b);
+    });
+    side.appendChild(grid);
+  }
+
+  /** Dice-roll reveal: cycles through each cook's pick and lands on the winner. */
+  diceRoll({ entries, win, face }, done) {
+    this.closeDice();
+    const v = el(`<div class="dice-bg"><div class="dice-card panel">
+      <h2>Rolling for the kitchen…</h2>
+      <div class="dice3d"><div class="cube" id="cube">${[1, 2, 3, 4, 5, 6].map((n) => `<div class="face f${n}">${pips(n)}</div>`).join('')}</div></div>
+      <div class="dice-picks">${entries.map((e, i) => `<div class="dpick" data-i="${i}" style="--c:${e.slot >= 0 ? hex(SLOT_COLORS[e.slot]) : '#888'};--wc:${WORLD_COLOR[e.world]}">${WORLD_ICON[e.world]}<b>${esc(WORLDS[e.world].name)}</b><span>${esc(e.name)}</span></div>`).join('')}</div>
+      <div class="dice-result" id="dres"></div></div></div>`);
+    this.root.appendChild(v);
+    this.diceEl = v;
+    const picks = [...v.querySelectorAll('.dpick')];
+    const cube = v.querySelector('#cube');
+    const rot = { 1: [0, 0], 2: [0, -90], 3: [-90, 0], 4: [90, 0], 5: [0, 90], 6: [180, 0] }[face];
+    requestAnimationFrame(() => { cube.style.transform = `rotateX(${720 + rot[0]}deg) rotateY(${1080 + rot[1]}deg)`; });
+    let k = 0, delay = 70;
+    const target = picks.length > 1 ? picks.length * 3 + win : 0;
+    const spin = () => {
+      if (!this.diceEl) return;
+      picks.forEach((p, i) => p.classList.toggle('hot', i === k % picks.length));
+      sfx.tick();
+      if (k >= target) {
+        picks[win].classList.add('win');
+        sfx.star(2);
+        v.querySelector('#dres').innerHTML = `${esc(entries[win].name)}'s pick: <b>${esc(WORLDS[entries[win].world].name)}</b>`;
+        setTimeout(() => { done(); }, 1300);
+        return;
+      }
+      k++; delay *= 1.12;
+      setTimeout(spin, delay);
+    };
+    setTimeout(spin, 300);
+  }
+  closeDice() { if (this.diceEl) { this.diceEl.remove(); this.diceEl = null; } }
+
   // ---------------------------------------------------------------- results
   showResults(res, { isHost, hasNext, onNext, onReplay, onLobby, onLeave }) {
     const [wi, li] = res.level.split('-').map(Number);
     const v = el(`
       <div class="results"><div class="panel card">
-        <div style="color:var(--muted);font-weight:600;letter-spacing:1px">${esc(WORLDS[wi].name.toUpperCase())} · ${wi + 1}-${li + 1}</div>
+        <div style="color:var(--muted);font-weight:600;letter-spacing:1px">${esc(WORLDS[wi].name.toUpperCase())} · ${lvLabel(wi, li)}</div>
         <h2>${res.stars === 3 ? 'Kitchen legends!' : res.stars === 2 ? 'Great service!' : res.stars === 1 ? 'Order up!' : 'Kitchen nightmare…'}</h2>
         <div class="big-stars">${[0, 1, 2].map((i) => ICON.star.replace('<svg', `<svg class="${i < res.stars ? 'on' : ''}" style="animation-delay:${0.3 + i * 0.35}s"`)).join('')}</div>
         <div class="total"><span class="coin" style="display:inline-grid;width:44px;height:44px;vertical-align:middle;margin-right:8px">$</span>${res.score}</div>
+        ${res.coins != null ? `<div class="earned"><span class="coin sm">$</span>+${res.coins} coins <span>· wallet ${res.wallet}</span></div>` : ''}
         <div class="thresholds">${res.thresholds.map((s, i) => `${'★'.repeat(i + 1)} ${s}`).join(' &nbsp;·&nbsp; ')}</div>
         <div class="grid">
           <div class="stat"><b>${res.delivered}</b><span>Dishes served</span></div>
@@ -532,3 +622,16 @@ export class UI {
     return v;
   }
 }
+
+function pips(n) {
+  const P = { 1: [[50, 50]], 2: [[28, 28], [72, 72]], 3: [[25, 25], [50, 50], [75, 75]], 4: [[28, 28], [72, 28], [28, 72], [72, 72]], 5: [[26, 26], [74, 26], [50, 50], [26, 74], [74, 74]], 6: [[28, 22], [72, 22], [28, 50], [72, 50], [28, 78], [72, 78]] }[n];
+  return P.map(([x, y]) => `<i style="left:${x}%;top:${y}%"></i>`).join('');
+}
+const UPG_ICON = {
+  speed: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M13 3l-1 6h6l-8 12 1-8H5z"/></svg>',
+  chop: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M3 19L17 5c2-2 5 1 3 3L9 16l-2 3z"/></svg>',
+  wash: '<svg viewBox="0 0 24 24" fill="#fff"><circle cx="8" cy="15" r="5"/><circle cx="16" cy="9" r="3.5"/><circle cx="18" cy="17" r="2.2"/></svg>',
+  jump: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2l6 7h-4v6h-4V9H6z"/><rect x="5" y="18" width="14" height="3" rx="1.5"/></svg>',
+  spray: '<svg viewBox="0 0 24 24" fill="#fff"><rect x="6" y="8" width="7" height="13" rx="3"/><path d="M8 8V5h4l5-2v6l-5-2"/><circle cx="20" cy="5" r="1.2"/><circle cx="21" cy="9" r="1.2"/></svg>',
+  recover: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 10c0 6-8 11-8 11z"/></svg>',
+};

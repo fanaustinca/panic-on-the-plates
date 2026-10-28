@@ -1,9 +1,9 @@
 // Kitchen rules + cook movement. The host runs Sim.step; clients run movePlayer for their own cook
 // and mirror everything else from host snapshots. No Three.js here (node tests import it).
-import { T, WORLDS, INGREDIENTS, finalState } from './config.js';
+import { T, WORLDS, INGREDIENTS, finalState, cleanUpg, upgMul } from './config.js';
 import { tileAt } from './levels.js';
 import { rng } from './rng.js';
-import { envAt, supportAt, blockedAt, deadlyCells, strikesNear, cuckooAt, floeAt, cycle } from './hazards.js';
+import { envAt, supportAt, blockedAt, deadlyCells, strikesNear, cuckooAt, floeAt, cycle, moverX } from './hazards.js';
 
 export const COUNTDOWN = 3.6; // "Ready" "Set" "Cook!"
 const COOKERS = { pan: 'pan', pot: 'pot', oven: 'oven' };
@@ -23,7 +23,7 @@ export function movePlayer(L, p, inp, dt, t) {
   let mx = inp.mx || 0, my = inp.my || 0;
   const m = Math.hypot(mx, my);
   if (m > 1) { mx /= m; my /= m; }
-  const speed = T.speed * env.scale;
+  const speed = T.speed * env.scale * upgMul(p, 'speed');
   let accel = T.accel * Math.max(0.6, env.scale);
   if (env.ice) accel = L.hz.ice.accel;
   if (env.lowG) accel = Math.min(accel, 7);
@@ -45,7 +45,7 @@ export function movePlayer(L, p, inp, dt, t) {
   p.ex = ex; p.ey = ey;
   collideMove(L, p, (p.vx + ex) * dt, (p.vy + ey) * dt, t);
 
-  if (inp.jump && grounded) { p.vz = T.jumpV * (env.lowG ? 1.08 : 1); p.jumped = (p.jumped || 0) + 1; }
+  if (inp.jump && grounded) { p.vz = T.jumpV * Math.sqrt(upgMul(p, 'jump')) * (env.lowG ? 1.08 : 1); p.jumped = (p.jumped || 0) + 1; }
   const g = T.gravity * (env.lowG ? 0.3 : 1);
   if (p.z > 0 || p.vz > 0) { p.vz -= g * dt; p.z += p.vz * dt; }
   if (p.z <= 0) {
@@ -81,10 +81,24 @@ function resolve(L, p, t) {
       }
     }
   }
+  // moving counters: same circle-vs-box test against their current position
+  for (const m of L.movers || []) {
+    const mx = moverX(m, t), my = m.y;
+    if (p.x < mx - 1 || p.x > mx + 2 || p.y < my - 1 || p.y > my + 2) continue;
+    const nx = Math.max(mx, Math.min(p.x, mx + 1)), ny = Math.max(my, Math.min(p.y, my + 1));
+    const ddx = p.x - nx, ddy = p.y - ny, d = Math.hypot(ddx, ddy);
+    if (d >= R) continue;
+    if (d > 1e-6) { p.x = nx + (ddx / d) * R; p.y = ny + (ddy / d) * R; }
+    else {
+      // shoved by the counter: out the nearer long side
+      p.y = p.y < my + 0.5 ? my - R : my + 1 + R;
+    }
+  }
 }
 
-/** The counter a cook is facing (or null): best of the 3x3 neighbourhood by facing alignment. */
-export function findTarget(L, p) {
+/** The counter a cook is facing (or null): best of the 3x3 neighbourhood by facing alignment.
+ *  Moving counters come back as [cellX, y, moverIndex]. */
+export function findTarget(L, p, t = 0) {
   const cx = Math.floor(p.x), cy = Math.floor(p.y);
   let best = null, bestS = -1e9;
   for (let yy = cy - 1; yy <= cy + 1; yy++) for (let xx = cx - 1; xx <= cx + 1; xx++) {
@@ -97,13 +111,22 @@ export function findTarget(L, p) {
     const s = dot * 1.4 - d;
     if (s > bestS) { bestS = s; best = [xx, yy]; }
   }
+  (L.movers || []).forEach((m, i) => {
+    const mx = moverX(m, t) + 0.5, my = m.y + 0.5;
+    const tx = mx - p.x, ty = my - p.y, d = Math.hypot(tx, ty);
+    if (d > 1.35) return;
+    const dot = (tx * p.fx + ty * p.fy) / (d || 1);
+    if (dot < 0.35) return;
+    const sc = dot * 1.4 - d + 0.05;
+    if (sc > bestS) { bestS = sc; best = [Math.floor(mx), m.y, i]; }
+  });
   return best;
 }
 
 export function newPlayer(L, info, slot) {
   const [sx, sy] = L.spawns[slot % L.spawns.length];
   return {
-    id: info.id, slot, name: info.name, outfit: info.outfit, color: info.color, skin: info.skin || 0,
+    id: info.id, slot, name: info.name, outfit: info.outfit, color: info.color, skin: info.skin || 0, upg: cleanUpg(info.upg),
     x: sx + 0.5, y: sy + 0.5, z: 0, vx: 0, vy: 0, vz: 0, fx: 0, fy: 1, ex: 0, ey: 0,
     held: null, ko: 0, life: 0, falling: false, work: false, act: null, target: null, inp: { mx: 0, my: 0, jump: false },
     stats: { delivered: 0, chopped: 0, washed: 0, fires: 0, kos: 0 },
@@ -136,7 +159,12 @@ export class Sim {
     this.phase = 'countdown';
     this.rand = rng(seed ^ 0x51ab);
     this.ts = L.tiles.map(() => ({}));
+    this.mv = (L.movers || []).map(() => ({ item: null }));
     this.players = roster.map((r, i) => newPlayer(L, r, i));
+    this.party = partyOf(roster.length);
+    this.maxOrders = Math.max(2, L.maxOrders + this.party.orders);
+    this.orderGap = L.orderGap * this.party.gap;
+    this.stars = starThresholds(L, roster.length);
     this.orders = [];
     this.nextOrderId = 1;
     this.nextOrderAt = 0;
@@ -149,7 +177,7 @@ export class Sim {
     this.struck = new Set();
     for (const tl of L.tiles) {
       const s = this.st(tl.x, tl.y);
-      if (tl.st === 'plates') s.item = plateItem(L.index >= 5 ? 4 : 3);
+      if (tl.st === 'plates') s.item = plateItem(L.diff >= 5 ? 4 : 3);
       if (tl.st === 'ext') s.item = { kind: 'ext' };
       if (tl.st === 'sink') { s.dirty = 0; s.clean = 0; }
       if (tl.st === 'return') s.dirty = 0;
@@ -171,6 +199,7 @@ export class Sim {
     const tgt = p.target && this.near(p, p.target) ? p.target : null;
     if (!tgt) return;
     const [x, y] = tgt;
+    if (tgt[2] != null) { this.pressMover(p, tgt); return; }
     const tl = this.tile(x, y), s = this.st(x, y);
     if (!tl || tl.k !== 'counter') return;
     if (s.fire) { this.emit('blocked', { x, y, msg: 'On fire!' }); return; }
@@ -245,6 +274,21 @@ export class Sim {
     }
   }
 
+  /** A moving counter behaves like a plain counter that happens to travel. */
+  pressMover(p, [x, y, mi]) {
+    const s = this.mv[mi], H = p.held, pid = p.id;
+    if (!s) return;
+    if (H && H.kind === 'ext' && this.L.tiles.some((q) => this.st(q.x, q.y).fire && Math.hypot(q.x + 0.5 - p.x, q.y + 0.5 - p.y) < 3)) return;
+    if (!H) {
+      if (!s.item) return;
+      if (s.item.kind === 'plate' && s.item.n > 1 && !s.item.dirty) { s.item.n--; p.held = plateItem(1); } else { p.held = s.item; s.item = null; }
+      this.emit('grab', { pid, x, y });
+      return;
+    }
+    if (!s.item) { s.item = H; p.held = null; this.emit('drop', { pid, x, y }); return; }
+    this.tryCombine(p, s, x, y);
+  }
+
   tryCombine(p, s, x, y) {
     const H = p.held, I = s.item;
     if (H.kind === 'plate' && I.kind === 'ing' && canPlate(H, I)) { H.c.push({ ing: I.ing, s: I.s }); s.item = null; this.emit('plate', { pid: p.id, x, y }); return; }
@@ -285,7 +329,7 @@ export class Sim {
 
   ko(p, why) {
     if (p.ko > 0) return;
-    p.ko = T.respawn; p.life++; p.stats.kos++;
+    p.ko = T.respawn * upgMul(p, 'recover'); p.life++; p.stats.kos++;
     p.falling = false; p.work = false;
     if (p.held) this.lose(p.held);
     p.held = null;
@@ -317,8 +361,8 @@ export class Sim {
       if (this.t < 0) return;
       this.phase = 'play';
       this.emit('go');
-      this.spawnOrder(); this.spawnOrder();
-      this.nextOrderAt = this.t + L.orderGap;
+      this.spawnOrder(); if (this.players.length > 1) this.spawnOrder();
+      this.nextOrderAt = this.t + this.orderGap * (this.players.length > 1 ? 1 : 0.6);
     }
     const t = this.t;
     const env = envAt(L, t);
@@ -379,11 +423,11 @@ export class Sim {
       const tl = this.tile(x, y), s = this.st(x, y);
       if (s.fire) { p.work = false; continue; }
       if (tl.st === 'board' && s.item && s.item.kind === 'ing' && s.item.s === 'raw') {
-        s.item.p += (dt * scale) / T.chopTime;
+        s.item.p += (dt * scale * upgMul(p, 'chop')) / T.chopTime;
         p.act = 'chop';
         if (s.item.p >= 1) { s.item.s = 'chopped'; s.item.p = 0; p.stats.chopped++; p.work = false; this.emit('chopped', { x, y, pid: p.id }); }
       } else if (tl.st === 'sink' && s.dirty > 0) {
-        s.wp = (s.wp || 0) + (dt * scale) / T.washTime;
+        s.wp = (s.wp || 0) + (dt * scale * upgMul(p, 'wash')) / T.washTime;
         p.act = 'wash';
         if (s.wp >= 1) { s.wp = 0; s.dirty--; s.clean++; p.stats.washed++; this.emit('washed', { x, y }); if (!s.dirty) p.work = false; }
       } else p.work = false;
@@ -464,9 +508,9 @@ export class Sim {
         this.emit('expire', { oid: o.id, name: L.recipes[o.r].name });
       }
     }
-    if ((t >= this.nextOrderAt || this.orders.length === 0) && this.orders.length < L.maxOrders && t < L.duration - 8) {
+    if ((t >= this.nextOrderAt || this.orders.length === 0) && this.orders.length < this.maxOrders && t < L.duration - 8) {
       this.spawnOrder();
-      this.nextOrderAt = t + L.orderGap * (0.8 + this.rand() * 0.4);
+      this.nextOrderAt = t + this.orderGap * (0.8 + this.rand() * 0.4);
     }
 
     if (t >= L.duration) {
@@ -482,7 +526,7 @@ export class Sim {
     let r = Math.floor(this.rand() * n);
     if (this.t > L.duration * 0.4 && this.rand() < 0.35) r = n - 1 - Math.floor(this.rand() * Math.min(2, n));
     const ings = L.recipes[r].ings.length;
-    const o = { id: this.nextOrderId++, r, t0: this.t, lim: 42 + 17 * ings };
+    const o = { id: this.nextOrderId++, r, t0: this.t, lim: Math.round((42 + 17 * ings) * this.party.lim) };
     this.orders.push(o);
     this.emit('order', { oid: o.id, name: L.recipes[r].name });
     return o;
@@ -496,7 +540,7 @@ export class Sim {
       const dx = tl.x + 0.5 - p.x, dy = tl.y + 0.5 - p.y, d = Math.hypot(dx, dy);
       if (d > 2.8) continue;
       if (d > 0.7 && (dx * p.fx + dy * p.fy) / d < 0.55) continue;
-      s.fire -= T.sprayRate * dt * (d < 1.6 ? 1 : 0.6);
+      s.fire -= T.sprayRate * upgMul(p, 'spray') * dt * (d < 1.6 ? 1 : 0.6);
       if (s.fire <= 0) { s.fire = 0; s.fireT = 0; p.stats.fires++; this.emit('extinguished', { x: tl.x, y: tl.y }); }
     }
   }
@@ -628,6 +672,7 @@ export class Sim {
       p: this.players.map((p) => ({ id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3), h: p.held || 0, ko: +p.ko.toFixed(2), lf: p.life, fa: p.falling ? 1 : 0, a: p.act, vx: +p.vx.toFixed(2), vy: +p.vy.toFixed(2) })),
       m: this.monkeys.map((m) => [m.id, +m.x.toFixed(2), +m.y.toFixed(2), +m.z.toFixed(2), m.item || 0, m.st, +(m.fx || 0).toFixed(2), +(m.fy || 1).toFixed(2)]),
       bd: this.beltDir,
+      mv: this.mv.map((m) => m.item || 0),
     };
   }
 
@@ -637,6 +682,7 @@ export class Sim {
     this.orders = S.o.map(([id, r, t0, lim]) => ({ id, r, t0, lim }));
     for (const s of this.ts) { s.item = null; s.fire = 0; s.dirty = 0; s.clean = 0; s.wp = 0; }
     for (const [i, item, fire, dirty, clean, wp] of S.ts) Object.assign(this.ts[i], { item: item || null, fire, dirty, clean, wp });
+    if (S.mv) S.mv.forEach((it, i) => { if (this.mv[i]) this.mv[i].item = it || null; });
     for (const sp of S.p) {
       const p = this.player(sp.id);
       if (!p) continue;
@@ -655,5 +701,13 @@ export class Sim {
 }
 
 /** Star count for a final score. */
-export const starsFor = (L, score) => L.stars.filter((s) => score >= s).length;
+/** Difficulty by party size: solo cooks get fewer, slower, more patient orders (and lower star targets). */
+export const PARTY = [null,
+  { orders: -1, gap: 1.5, lim: 1.3, stars: 0.6 },
+  { orders: 0, gap: 1.15, lim: 1.12, stars: 0.85 },
+  { orders: 0, gap: 1.0, lim: 1.0, stars: 1.0 },
+  { orders: 1, gap: 0.88, lim: 1.0, stars: 1.15 }];
+export const partyOf = (n) => PARTY[Math.max(1, Math.min(4, n | 0))];
+export const starThresholds = (L, n) => L.stars.map((s) => Math.max(5, Math.round((s * partyOf(n).stars) / 5) * 5));
+export const starsFor = (L, score, n = 3) => starThresholds(L, n).filter((s) => score >= s).length;
 export { floeAt, cycle };

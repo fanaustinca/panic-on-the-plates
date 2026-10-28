@@ -4,6 +4,9 @@ import { WORLDS, LEVEL_RECIPES, worldRecipes, T } from './config.js';
 import { rng, hash } from './rng.js';
 
 export const LEVELS_PER_WORLD = 10;
+/** Index of each world's multiplayer kitchen (bigger, more workstations); key `${wi}-10`. */
+export const MP_LEVEL = 10;
+const MP_TITLES = ['Fleet Galley', 'Ice Station Banquet', 'Magma Mess Hall', 'Orbital Canteen', 'Sky Palace Feast', 'Treetop Village', 'Mega Plant', 'Grand Archive'];
 
 const TITLES = [
   ['Galley Ho!', 'Plank Prep', 'Two Decks', 'Brig Brunch', 'Cannon Kitchen', 'Keelhaul Kitchen', 'Mutiny Mise', "Crow's Nest Cuisine", 'Kraken Shallows', "Captain's Table"],
@@ -13,9 +16,9 @@ const TITLES = [
   ['Cloud Nine Café', 'Tailwind Table', 'Gust Front', 'Sky Bridge Bistro', 'Thunder Prep', 'Jet Stream Kitchen', 'Cumulus Cuisine', 'Storm Cell', 'Eye of the Storm', 'Stratosphere Supper'],
   ['Treetop Takeout', 'Monkey Business', 'Rope Bridge Run', 'Canopy Kitchen', 'Vine Dining', 'Banana Heist', 'Swinging Skillets', 'Lost Temple Lunch', 'Howler Hollow', 'King of the Canopy'],
   ['Clock In', 'Belt Drive', 'Assembly Line', 'Lever Lunch', 'Hot Rivets', 'Night Shift', 'Overtime', 'Quality Control', 'Full Throttle', 'Mainframe Feast'],
-  ['Quiet Please', 'Overdue Orders', 'Tick Tock Toast', 'Grimoire Grill', 'The Cuckoo Hour', 'Hourglass Hall', 'Midnight Index', 'Pendulum Pantry', 'Time Loop Lunch', 'Grand Clockwork Finale'],
+  ['Quiet Please', 'Overdue Orders', 'Tick Tock Toast', 'Grimoire Grill', 'The Cuckoo Hour', 'Hourglass Hall', 'Midnight Index', 'Pendulum Pantry', 'Time Loop Lunch', 'Clockwork Finale'],
 ];
-export const levelTitle = (wi, li) => TITLES[wi][li];
+export const levelTitle = (wi, li) => (li === MP_LEVEL ? MP_TITLES[wi] : TITLES[wi][li]);
 export const levelKey = (wi, li) => `${wi}-${li}`;
 
 const SOLID = new Set(['counter']); // blocks movement (walls handled separately)
@@ -29,23 +32,29 @@ export const isBlocking = (t) => !t || t.k === 'counter' || t.k === 'wall';
 export function buildLevel(wi, li) {
   for (let attempt = 0; attempt < 60; attempt++) {
     const L = tryBuild(wi, li, hash(wi + 1, li + 1, 9173, attempt));
-    if (L && validate(L).ok) return L;
+    if (!L) continue;
+    if (validate(L).ok) return L;
+    // a moving counter that cuts a route off is dropped rather than throwing the layout away
+    if (L.movers.length) { L.movers = []; for (const t of L.tiles) delete t.track; if (validate(L).ok) return L; }
   }
   throw new Error(`level ${wi}-${li} failed to generate`);
 }
 
-function tryBuild(wi, li, seed) {
+function tryBuild(wi, liIn, seed) {
   const r = rng(seed);
   const world = WORLDS[wi];
-  const W = [11, 12, 12, 13, 13, 14, 14, 15, 15, 16][li];
-  const H = li < 4 ? 9 : 10;
+  // the multiplayer kitchen plays like a mid-campaign level, on a much bigger floor
+  const mp = liIn === MP_LEVEL;
+  const li = mp ? 5 : liIn;
+  const W = mp ? 19 : [11, 12, 12, 13, 13, 14, 14, 15, 15, 16][li];
+  const H = mp ? 11 : li < 4 ? 9 : 10;
   const tiles = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tiles.push({ k: 'floor', x, y });
   const at = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? tiles[y * W + x] : null);
   const set = (x, y, k, extra) => { const t = at(x, y); if (t) { for (const key of Object.keys(t)) if (key !== 'x' && key !== 'y') delete t[key]; t.k = k; Object.assign(t, extra); } };
 
   // ---- zones (islands separated by void gaps) ----
-  let Z = li < 2 ? 1 : li < 4 ? (r.chance(0.5) ? 1 : 2) : li < 8 ? 2 : (W >= 15 ? 3 : 2);
+  let Z = mp ? 2 : li < 2 ? 1 : li < 4 ? (r.chance(0.5) ? 1 : 2) : li < 8 ? 2 : (W >= 15 ? 3 : 2);
   if (wi === 1 && li >= 2) Z = Math.max(Z, 2); // glacier: drifting floes need water channels
   if (wi === 5 && li >= 2) Z = Math.max(Z, 2); // jungle: rope bridges between treehouses
   const gapW = wi === 1 ? 2 : (li >= 6 && r.chance(0.5) ? 2 : 1);
@@ -138,7 +147,28 @@ function tryBuild(wi, li, seed) {
   }
 
   // ---- station placement ----
-  const recipes = LEVEL_RECIPES[li].map((ri) => worldRecipes(wi)[ri]);
+  // ---- moving counters: a counter on a rail gliding along an interior row (from level 4) ----
+  const movers = [];
+  const nMovers = mp ? 2 : li >= 7 ? 2 : li >= 3 ? 1 : 0;
+  const okCell = (x, yy) => { const t = at(x, yy); return t && t.k === 'floor' && !t.wallShift && !t.push && !t.track; };
+  for (const z of [...zones].sort((a, b) => (b.x1 - b.x0) - (a.x1 - a.x0))) {
+    if (movers.length >= nMovers) break;
+    // try spans that leave at least one walkable column at either end of the rail
+    const spans = [[z.x0 + 2, z.x1 - 2], [z.x0 + 1, z.x1 - 2], [z.x0 + 2, z.x1 - 1]].filter(([a, b]) => b - a >= 2);
+    const opts = [];
+    for (const [tx0, tx1] of spans) for (let y = 2; y <= H - 3; y++) {
+      let good = true;
+      for (let x = tx0; x <= tx1 && good; x++) good = okCell(x, y) && okCell(x, y - 1) && okCell(x, y + 1);
+      if (good) opts.push([tx0, tx1, y]);
+    }
+    if (!opts.length) continue;
+    const [tx0, tx1, y] = r.pick(opts);
+    for (let x = tx0; x <= tx1; x++) at(x, y).track = true;
+    movers.push({ x0: tx0, x1: tx1, y, period: 9 + (tx1 - tx0) * 1.2, phase: r() });
+    if (mp && movers.length < nMovers && zones.length === 1) break;
+  }
+
+  const recipes = LEVEL_RECIPES[mp ? 7 : li].map((ri) => worldRecipes(wi)[ri]);
   const ings = [...new Set(recipes.flatMap((rc) => rc.ings))];
   const methods = new Set(ings.map((id) => world.ingredients.find((g) => g.id === id).method));
   const interior = (t) => t && (t.k === 'floor' || t.k === 'bridge') && !t.wallShift;
@@ -181,7 +211,7 @@ function tryBuild(wi, li, seed) {
     if (li >= 5) {
       // floor conveyors along one interior row push cooks around
       const fy = r.int(3, H - 3);
-      for (const t of tiles) if (t.y === fy && t.k === 'floor' && !t.wallShift) t.push = (li % 2 ? 1 : -1);
+      for (const t of tiles) if (t.y === fy && t.k === 'floor' && !t.wallShift && !t.track) t.push = (li % 2 ? 1 : -1);
     }
   }
 
@@ -196,15 +226,21 @@ function tryBuild(wi, li, seed) {
   put(take((t) => zoneOf(t.x) === lastZ && t.y !== H - 1), 'plates');
   // bins: mostly in the first zone so ingredients have to travel
   for (const id of ings) put(take((t) => zoneOf(t.x) === 0 && (t.y === 1 || t.x === zones[0].x0)), 'bin', { ing: id });
-  const nBoards = 1 + (li >= 3 ? 1 : 0) + (li >= 7 ? 1 : 0);
+  const nBoards = mp ? 4 : 1 + (li >= 3 ? 1 : 0) + (li >= 7 ? 1 : 0);
   for (let i = 0; i < nBoards; i++) put(take((t) => zoneOf(t.x) === i % (Z) ), 'board');
-  const dup = (m) => (li >= 6 && ings.length >= 3 ? 2 : 1);
+  const dup = (m) => (mp ? 2 : li >= 6 && ings.length >= 3 ? 2 : 1);
   if (methods.has('pan')) for (let i = 0; i < dup('pan'); i++) put(take((t) => t.y === 1 && zoneOf(t.x) === (i + 1) % Z), 'pan');
   if (methods.has('pot')) for (let i = 0; i < dup('pot'); i++) put(take((t) => t.y === 1 && zoneOf(t.x) === (i + Z - 1) % Z), 'pot');
-  if (methods.has('oven')) for (let i = 0; i < (li >= 8 ? 2 : 1); i++) put(take((t) => (t.y === 1 || t.y === H - 1) && zoneOf(t.x) === (lastZ - i + Z) % Z), 'oven');
+  if (methods.has('oven')) for (let i = 0; i < (li >= 8 || mp ? 2 : 1); i++) put(take((t) => (t.y === 1 || t.y === H - 1) && zoneOf(t.x) === (lastZ - i + Z) % Z), 'oven');
   put(take((t) => t.y === H - 1 || t.y === 1), 'trash');
   if (methods.has('pan') || methods.has('pot') || methods.has('oven') || wi === 2 || wi === 4) put(take(() => true), 'ext');
   if (Z > 1 && r.chance(0.6)) put(take((t) => zoneOf(t.x) !== 0), 'trash');
+  if (mp) {
+    // more workstations so four cooks aren't queueing: a second sink, plate stack and extinguisher
+    put(take((t) => zoneOf(t.x) !== sinkZ && (t.y === 1 || t.y === H - 1)), 'sink');
+    put(take((t) => zoneOf(t.x) === 0), 'plates');
+    put(take((t) => t.y === H - 1), 'trash');
+  }
 
   if (belts.length && li >= 3) {
     const lever = take((t) => zoneOf(t.x) === 0 && t.y !== 1);
@@ -217,7 +253,7 @@ function tryBuild(wi, li, seed) {
   const spawnPool = [];
   for (let i = 0; i < 4; i++) {
     const z = zones[i % Z];
-    const opts = tiles.filter((t) => t.k === 'floor' && !t.wallShift && !t.push && t.x > z.x0 && t.x < z.x1 && t.y >= 2 && t.y <= H - 2 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y));
+    const opts = tiles.filter((t) => t.k === 'floor' && !t.wallShift && !t.push && !t.track && t.x > z.x0 && t.x < z.x1 && t.y >= 2 && t.y <= H - 2 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y));
     opts.sort((a, b) => Math.abs(a.y - H / 2) - Math.abs(b.y - H / 2) || Math.abs(a.x - (z.x0 + z.x1) / 2) - Math.abs(b.x - (z.x0 + z.x1) / 2));
     const s = opts[Math.min(opts.length - 1, i < Z ? 0 : 1 + i)];
     if (!s) return null;
@@ -225,9 +261,9 @@ function tryBuild(wi, li, seed) {
   }
 
   // ---- hazard description (all timed deterministically from level time) ----
-  const D = 150 + li * 8;
+  const D = mp ? 210 : 150 + li * 8;
   const hz = { world: world.id };
-  const floorList = () => tiles.filter((t) => t.k === 'floor' && !t.wallShift && t.y >= 2 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y));
+  const floorList = () => tiles.filter((t) => t.k === 'floor' && !t.wallShift && !t.track && t.y >= 2 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y));
   const schedule = (every, jitter, startAt, pickTile) => {
     const out = [];
     for (let t = startAt; t < D + 5; t += every * (0.75 + r() * jitter)) { const tt = pickTile(); if (tt) out.push({ t, x: tt.x, y: tt.y }); }
@@ -236,7 +272,7 @@ function tryBuild(wi, li, seed) {
   switch (world.id) {
     case 'pirate':
       hz.tilt = { amp: 0.035 + li * 0.009, period: 11 - li * 0.3, push: 1.2 + li * 0.25 };
-      if (li >= 2) hz.cannon = schedule(Math.max(4.5, 13 - li), 0.6, 12, () => r.pick(floorList()));
+      if (li >= 1) hz.cannon = schedule(Math.max(4.5, 14 - li), 0.6, li === 1 ? 20 : 12, () => r.pick(floorList()));
       break;
     case 'glacier':
       hz.ice = { accel: 7 - li * 0.25, drag: 1.4 };
@@ -300,9 +336,9 @@ function tryBuild(wi, li, seed) {
   const round5 = (v) => Math.max(5, Math.round(v / 5) * 5);
 
   return {
-    world: wi, index: li, id: levelKey(wi, li), name: TITLES[wi][li], W, H, seed, tiles,
-    zones, gaps, bridges, floes, islands, shifters, belts, stations, spawns: spawnPool,
-    recipes, duration: D, maxOrders: li < 2 ? 3 : li < 6 ? 4 : 5,
+    world: wi, index: liIn, diff: li, mp, id: levelKey(wi, liIn), name: levelTitle(wi, liIn), W, H, seed, tiles,
+    zones, gaps, bridges, floes, islands, shifters, belts, stations, spawns: spawnPool, movers,
+    recipes, duration: D, maxOrders: mp ? 5 : li < 2 ? 3 : li < 6 ? 4 : 5,
     orderGap: Math.max(9, 18 - li), stars: [round5(X * 0.3), round5(X * 0.55), round5(X * 0.8)], hz,
   };
 }
@@ -321,6 +357,7 @@ export function validate(L) {
         const s = L.shifters.find((q) => q.x === t.x && q.y === t.y);
         if (s && ((s.phase < 0.25 ? 0 : 1) === phase)) return false;
       }
+      if (t.track) return false;
       if (t.k === 'floor' || t.k === 'bridge') return true;
       if (t.k === 'void' && floeCols.has(t.x) && t.y >= 2 && t.y <= H - 3) return true;
       return false;

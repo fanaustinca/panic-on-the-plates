@@ -112,7 +112,7 @@ await T('every world renders a level', async () => {
   await page.close();
 });
 
-await T('multiplayer: quick match pairs two tabs, vote, start, movement and actions sync', async () => {
+await T('multiplayer: quick match pairs two tabs, world vote + dice, start, movement and actions sync', async () => {
   const A = await openPage(browser, base);
   const B = await openPage(browser, base);
   await A.page.evaluate(() => { PANIC.app.save.name = 'Host'; PANIC.app.quickMatch(); });
@@ -130,14 +130,16 @@ await T('multiplayer: quick match pairs two tabs, vote, start, movement and acti
   await B.page.waitForFunction(() => PANIC.app.members.size === 2, { polling: 100, timeout: 60000 });
   // the room browser sees the room
   // vote + ready from B, start from A
-  await B.page.evaluate(() => { PANIC.app.vote('4-2'); PANIC.app.toggleReady(); });
+  await B.page.evaluate(() => { PANIC.app.vote('4'); PANIC.app.toggleReady(); });
   console.log('      mp step 5');
-  await A.page.waitForFunction(() => PANIC.app.pickLevel() === '4-2' && [...PANIC.app.members.values()].every((m) => m.ready), { polling: 100, timeout: 60000 });
+  await A.page.waitForFunction(() => PANIC.app.pickLevel() === '4-10' && [...PANIC.app.members.values()].every((m) => m.ready), { polling: 100, timeout: 60000 });
   await shot(A.page, 'e2e-mp-lobby.png');
   console.log('      mp step 6');
   await A.page.evaluate(() => PANIC.app.startMatch());
   console.log('      mp step 7');
-  await B.page.waitForFunction(() => PANIC.game && PANIC.game.L.id === '4-2', { polling: 100, timeout: 60000 });
+  // the dice overlay shows on both screens, then the world's multiplayer kitchen loads
+  await B.page.waitForSelector('.dice-bg', { timeout: 60000 });
+  await B.page.waitForFunction(() => PANIC.game && PANIC.game.L.id === '4-10', { polling: 100, timeout: 90000 });
   console.log('      mp step 8');
   await B.page.waitForFunction(() => PANIC.game.sim.phase === 'play', { polling: 100, timeout: 60000 });
   const bid = await B.page.evaluate(() => PANIC.app.selfId);
@@ -186,7 +188,7 @@ await T('multiplayer: quick match pairs two tabs, vote, start, movement and acti
 await T('full round ends with results and saves stars', async () => {
   const { page, errors } = await openPage(browser, base);
   await page.evaluate(() => { PANIC.app.solo(); PANIC.app.startMatch('0-0'); });
-  await page.evaluate(() => { const g = PANIC.game; for (let i = 0; i < 80; i++) g.sim.step(0.05); g.sim.orders = []; g.sim.t = g.L.duration - 0.1; g.sim.score = g.L.stars[1] + 1; });
+  await page.evaluate(() => { const g = PANIC.game; for (let i = 0; i < 80; i++) g.sim.step(0.05); g.sim.orders = []; g.sim.t = g.L.duration - 0.1; g.sim.score = g.sim.stars[1] + 1; });
   await page.waitForSelector('.results', { timeout: 90000 });
   const stars = await page.evaluate(() => PANIC.app.save.stars['0-0']);
   assert(stars === 2, 'saved 2 stars: ' + stars);

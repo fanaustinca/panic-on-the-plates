@@ -3,8 +3,10 @@
 import * as THREE from 'three';
 import { T, INGREDIENTS, WORLDS } from '../config.js';
 import { tileAt } from '../levels.js';
-import { floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN } from '../hazards.js';
-import { floorTex, wallTex, topTex, stripeTex, beltTex, glowTex, textTex, shade } from './textures.js';
+import { floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
+import { floorTex, wallTex, topTex, stripeTex, beltTex, glowTex, textTex, shade, cabinetTex } from './textures.js';
+import { Particles } from './particles.js';
+import { WATERLINE } from './ship.js';
 import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode, makeItem, itemKey, makeIngredient } from './items.js';
 import { STYLE, buildBackdrop } from './env.js';
 
@@ -24,6 +26,14 @@ export class Kitchen {
     this.fires = new Map();
     this.stationParts = new Map();
     this.fx = [];
+    this.parts = new Particles();
+    this.root.add(this.parts.group);
+    this.chopN = new Map();   // per-cook chop stroke counter (spawns bits on each knife hit)
+    this.squash = new Map();  // per-tile squash pulse from knife hits
+    this.emitAcc = 0;
+    this.struckFx = new Set();
+    this.holeTiles = new Set();
+    this.tmpQ = new THREE.Quaternion();
     this.build();
   }
 
@@ -47,7 +57,7 @@ export class Kitchen {
     const floorM = new THREE.MeshStandardMaterial({ map: floorTex(S.floor), roughness: S.floor === 'ice' ? 0.15 : 0.7, metalness: S.floor === 'ice' ? 0.1 : 0.05 });
     const wallM = new THREE.MeshStandardMaterial({ map: wallTex(S.wall), roughness: 0.8 });
     const topM = new THREE.MeshStandardMaterial({ map: topTex(S.top), roughness: S.top === 'ice' || S.top === 'marble' ? 0.25 : 0.55, metalness: S.top === 'steel' ? 0.6 : 0 });
-    const sideM = mat(S.side, { rough: 0.6 });
+    const sideM = new THREE.MeshStandardMaterial({ map: cabinetTex(S.top === 'steel' || S.top === 'panel' ? 'steel' : 'wood'), color: S.side, roughness: 0.55, metalness: S.top === 'steel' || S.top === 'panel' ? 0.35 : 0 });
     const trimM = mat(S.trim, { rough: 0.4, metal: 0.3, emissive: this.world.id === 'volcano' || this.world.id === 'space' ? S.trim : 0, ei: 0.5 });
     const floors = L.tiles.filter((t) => t.k === 'floor');
     const counters = L.tiles.filter((t) => t.k === 'counter' && !['trash', 'oven'].includes(t.st));
@@ -64,8 +74,9 @@ export class Kitchen {
     const B = new THREE.BoxGeometry(1, 1, 1);
     // floor slabs (counters sit on slabs too, so islands read as solid platforms)
     const slabs = L.tiles.filter((t) => t.k === 'floor' || (t.k === 'counter' && !t.overVoid) || t.k === 'wall');
-    inst(B, floorM, slabs, (o, t) => { o.position.set(this.cx(t.x), -0.15, this.cz(t.y)); o.scale.set(1, 0.3, 1); });
-    inst(B, mat(shade(S.side, -0.35), { rough: 0.8 }), slabs, (o, t) => { o.position.set(this.cx(t.x), -0.55, this.cz(t.y)); o.scale.set(0.98, 0.5, 0.98); });
+    this.slabTop = inst(B, floorM, slabs, (o, t) => { o.position.set(this.cx(t.x), -0.15, this.cz(t.y)); o.scale.set(1, 0.3, 1); });
+    this.slabBot = inst(B, mat(shade(S.side, -0.35), { rough: 0.8 }), slabs, (o, t) => { o.position.set(this.cx(t.x), -0.55, this.cz(t.y)); o.scale.set(0.98, 0.5, 0.98); });
+    this.slabIdx = new Map(slabs.map((t, i) => [t.y * L.W + t.x, i]));
     // counters
     inst(B, sideM, counters, (o, t) => { o.position.set(this.cx(t.x), CH / 2 - 0.05, this.cz(t.y)); o.scale.set(0.96, CH - 0.1, 0.96); });
     inst(B, topM, counters, (o, t) => { o.position.set(this.cx(t.x), CH - 0.04, this.cz(t.y)); o.scale.set(1.0, 0.08, 1.0); });
@@ -78,9 +89,11 @@ export class Kitchen {
     this.buildBridges();
     this.buildFloes();
     this.buildShifters();
+    this.buildMovers(sideM, topM);
     this.buildHazardProps();
     this.backdrop = buildBackdrop(this.world.id, L.W, L.H, this.world.sky);
     this.root.add(this.backdrop.group);
+    this.worldGroup = this.backdrop.world; // added to the scene by the game; does not roll
     // target highlight
     this.highlight = new THREE.Mesh(new THREE.BoxGeometry(1.04, 0.04, 1.04), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }));
     this.highlight.visible = false;
@@ -168,26 +181,68 @@ export class Kitchen {
         add(box(), mat(0xd8dde6, { metal: 0.5 }), [0.52, 0.12, 0], [0.18, 0.24, 0.5]);
         break;
       case 'return': {
-        add(box(), dark, [0, 0.01, 0], [0.8, 0.02, 0.8]);
-        add(box(), mat(0x3a7ad8), [0, 0.5, -0.42], [0.9, 0.8, 0.06]);
-        const s = add(new THREE.PlaneGeometry(0.8, 0.22), new THREE.MeshBasicMaterial({ map: textTex('DISHES', { fg: '#fff', font: '800 38px Fredoka, sans-serif' }), transparent: true }), [0, 0.78, -0.385]);
-        s.castShadow = false;
-        add(box(), mat(0x111418), [0, 0.35, -0.385], [0.6, 0.36, 0.01]);
+        // dish-return hatch: steel housing with a strip curtain, a sloped roller chute and a beacon
+        const ss = mat(0xc9d1d9, { metal: 0.85, rough: 0.28 });
+        add(box(), ss, [0, 0.5, -0.31], [0.94, 1.0, 0.34]);
+        add(box(), mat(0x9aa4ae, { metal: 0.8, rough: 0.3 }), [0, 1.02, -0.31], [0.98, 0.05, 0.38]);
+        add(box(), mat(0x0a0c10, { rough: 1 }), [0, 0.36, -0.135], [0.66, 0.46, 0.01]);
+        P.strips = [];
+        for (let k = 0; k < 6; k++) {
+          const st = new THREE.Group(); st.position.set(-0.275 + k * 0.11, 0.58, -0.125);
+          st.add(part(box(), mat(0x9fb4c0, { opacity: 0.55, rough: 0.2 }), [0, -0.2, 0], [0.1, 0.4, 0.01]));
+          st.children[0].castShadow = false;
+          g.add(st); P.strips.push(st);
+        }
+        // chute: rails + rollers sloping down towards the cooks
+        for (const sx of [-1, 1]) add(box(), ss, [sx * 0.4, 0.13, 0.13], [0.05, 0.12, 0.6], [-0.2, 0, 0]);
+        for (let k = 0; k < 6; k++) add(cyl(12), mat(0x5a646e, { metal: 0.7, rough: 0.35 }), [0, 0.2 - k * 0.022, -0.12 + k * 0.1], [0.035, 0.76, 0.035], [0, 0, Math.PI / 2]);
+        add(box(), ss, [0, 0.06, 0.45], [0.84, 0.1, 0.05]);
+        // sign: dirty plate pictogram
+        const sg = add(new THREE.PlaneGeometry(0.62, 0.2), new THREE.MeshBasicMaterial({ map: textTex('RETURNS', { w: 256, h: 80, bg: '#20303c', fg: '#bfe6ff', font: '800 46px Fredoka, sans-serif' }) }), [0, 0.79, -0.139]);
+        sg.castShadow = false;
+        P.beacon = add(sph(16), new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8000, emissiveIntensity: 0.1, transparent: true, opacity: 0.9, roughness: 0.2 }), [0.32, 1.08, -0.31], [0.07, 0.07, 0.07]);
+        add(cyl(12), mat(0x2a2d31), [0.32, 1.05, -0.31], [0.08, 0.03, 0.08]);
         break;
       }
       case 'window': {
-        const frame = mat(0xe8553a, { rough: 0.4 });
-        add(box(), mat(0xe8e2d4, { rough: 0.4 }), [0, 0.01, 0], [0.96, 0.02, 0.96]);
-        for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(box(), frame, [sx * 0.44, 0.62, sz * 0.44], [0.07, 1.24, 0.07]);
-        add(box(), frame, [0, 1.24, -0.44], [0.96, 0.08, 0.07]);
-        // striped awning sloping towards the cooks
-        const aw = add(new THREE.PlaneGeometry(1.1, 0.62), new THREE.MeshStandardMaterial({ map: stripeTex('#ff5a3c', '#fff6e6'), side: THREE.DoubleSide, roughness: 0.7 }), [0, 1.36, 0.06], 1, [-1.05, 0, 0]);
-        aw.castShadow = true;
-        const sign = add(new THREE.PlaneGeometry(0.9, 0.24), new THREE.MeshBasicMaterial({ map: textTex('ORDER UP!', { bg: '#1b1b2a', fg: '#ffd23a', font: '800 36px Fredoka, sans-serif' }) }), [0, 1.08, -0.4]);
+        // the serving pass: steel shelf under heat lamps, a lit ORDER UP header, the dining room glowing behind
+        const ss = mat(0xdfe5ea, { metal: 0.85, rough: 0.2 });
+        const red = mat(0xd8402a, { rough: 0.35, metal: 0.2 });
+        add(box(), ss, [0, 0.025, 0], [0.98, 0.05, 0.98]);
+        add(box(), red, [0, 0.0, 0.48], [0.98, 0.07, 0.05]);
+        // landing pad for the plate: gold inset with a glowing edge
+        P.pad = add(box(), new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0xffb000, emissiveIntensity: 0.35, metalness: 0.6, roughness: 0.3 }), [0, 0.054, 0.05], [0.56, 0.01, 0.5]);
+        add(box(), ss, [0, 0.058, 0.05], [0.5, 0.01, 0.44]);
+        // hatch frame (posts + header) at the back
+        for (const sx of [-1, 1]) add(box(), red, [sx * 0.45, 0.72, -0.42], [0.08, 1.44, 0.12]);
+        add(box(), red, [0, 1.42, -0.42], [0.98, 0.3, 0.16]);
+        const sign = add(new THREE.PlaneGeometry(0.86, 0.22), new THREE.MeshBasicMaterial({ map: textTex('ORDER UP!', { bg: '#1b1b2a', fg: '#ffd23a', font: '800 40px Fredoka, sans-serif' }) }), [0, 1.42, -0.335]);
         sign.castShadow = false;
-        P.bell = add(sph(14), mat(0xf2c23a, { metal: 0.9, rough: 0.2 }), [0.3, 0.07, 0.28], [0.08, 0.06, 0.08]);
-        P.lamp = add(cyl(16), mat(0xffd080, { emissive: 0xffa040, ei: 0.8 }), [0, 1.18, 0], [0.12, 0.05, 0.12]);
-        add(box(), mat(0xb8c0c8, { metal: 0.7, rough: 0.3 }), [0, 0.04, 0], [0.86, 0.04, 0.22]);
+        P.sign = sign;
+        // the dining room behind: warm glow panel
+        const room = add(new THREE.PlaneGeometry(0.82, 1.15), new THREE.MeshBasicMaterial({ map: diningTex(), toneMapped: true }), [0, 0.68, -0.47]);
+        room.castShadow = false;
+        // ticket rail with clipped tickets
+        add(box(), ss, [0, 1.22, -0.33], [0.84, 0.03, 0.03]);
+        P.tickets = [];
+        for (let k = 0; k < 3; k++) {
+          const tk = add(new THREE.PlaneGeometry(0.13, 0.17), new THREE.MeshStandardMaterial({ color: 0xfffbea, roughness: 0.9, side: THREE.DoubleSide }), [-0.25 + k * 0.25, 1.12, -0.315], 1, [0, 0, (k - 1) * 0.08]);
+          tk.castShadow = false;
+          P.tickets.push(tk);
+        }
+        // two heat lamps hanging from the header
+        P.lamps = [];
+        for (const sx of [-0.24, 0.24]) {
+          add(cyl(6), mat(0x222222), [sx, 1.25, -0.2], [0.012, 0.3, 0.012]);
+          add(cone(20), mat(0xb02a1a, { metal: 0.4, rough: 0.35 }), [sx, 1.06, -0.2], [0.13, 0.14, 0.13]);
+          const bulb = add(sph(12), new THREE.MeshStandardMaterial({ color: 0xffd0a0, emissive: 0xff7a30, emissiveIntensity: 1.6 }), [sx, 0.99, -0.2], 0.05);
+          bulb.castShadow = false;
+          P.lamps.push(bulb);
+        }
+        const cone2 = add(new THREE.ConeGeometry(0.42, 0.95, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a40, transparent: true, opacity: 0.07, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), [0, 0.52, -0.1]);
+        cone2.castShadow = false;
+        P.bell = add(sph(14), mat(0xf2c23a, { metal: 0.9, rough: 0.2 }), [0.36, 0.1, 0.32], [0.075, 0.06, 0.075]);
+        add(cyl(10), mat(0x2a2a2a), [0.36, 0.065, 0.32], [0.09, 0.02, 0.09]);
         break;
       }
       case 'bin': {
@@ -253,6 +308,36 @@ export class Kitchen {
       g.add(part(dode(), mat(0xbfe6f6, { rough: 0.3, flat: true }), [f.w / 2, -0.55, f.h / 2], [f.w * 0.55, 0.45, f.h * 0.55]));
       this.root.add(g);
       return { f, g };
+    });
+  }
+
+  buildMovers(sideM, topM) {
+    this.moverMeshes = (this.L.movers || []).map((m) => {
+      // rail track sunk into the floor along the whole run
+      const len = m.x1 - m.x0 + 1;
+      const tg = new THREE.Group();
+      tg.position.set(this.wx(m.x0) + len / 2, 0, this.cz(m.y));
+      tg.add(part(new THREE.PlaneGeometry(len - 0.04, 0.7), new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.6, metalness: 0.5 }), [0, 0.004, 0], 1, [-Math.PI / 2, 0, 0]));
+      for (const sz of [-0.22, 0.22]) tg.add(part(box(), mat(0xb8c0c8, { metal: 0.85, rough: 0.25 }), [0, 0.018, sz], [len - 0.08, 0.025, 0.05]));
+      for (let k = 0; k < len * 3; k++) tg.add(part(box(), mat(0x4a3a2a, { rough: 0.9 }), [-len / 2 + 0.17 + k / 3, 0.008, 0], [0.08, 0.012, 0.62]));
+      const ends = stripeTex();
+      for (const sx of [-1, 1]) tg.add(part(new THREE.PlaneGeometry(0.16, 0.7), new THREE.MeshBasicMaterial({ map: ends }), [sx * (len / 2 - 0.08), 0.012, 0], 1, [-Math.PI / 2, 0, 0]));
+      tg.children.forEach((c) => { c.castShadow = false; });
+      this.root.add(tg);
+      // the counter itself on a wheeled bogie
+      const g = new THREE.Group();
+      g.add(part(box(), sideM, [0, CH / 2 + 0.02, 0], [0.94, CH - 0.12, 0.94]));
+      g.add(part(box(), topM, [0, CH - 0.04, 0], [1.0, 0.08, 1.0]));
+      g.add(part(box(), mat(0x30343a, { metal: 0.6, rough: 0.4 }), [0, 0.06, 0], [0.98, 0.1, 0.98]));
+      for (const sx of [-0.33, 0.33]) for (const sz of [-0.22, 0.22]) g.add(part(cyl(14), mat(0x111111, { rough: 0.5 }), [sx, 0.07, sz], [0.07, 0.06, 0.07], [Math.PI / 2, 0, 0]));
+      const lights = [];
+      for (const sx of [-1, 1]) {
+        g.add(part(new THREE.PlaneGeometry(0.94, 0.12), new THREE.MeshStandardMaterial({ map: stripeTex(), roughness: 0.6 }), [0, 0.2, sx * 0.476], 1, [0, sx > 0 ? 0 : Math.PI, 0]));
+        const l = part(sph(10), new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8000, emissiveIntensity: 0.1 }), [sx * 0.42, CH + 0.05, 0.42], 0.05);
+        g.add(l); lights.push(l);
+      }
+      this.root.add(g);
+      return { m, g, lights, hold: null, key: '' };
     });
   }
 
@@ -392,9 +477,31 @@ export class Kitchen {
   update(sim, t, dt, camera, rt) {
     const L = this.L;
     const env = envAt(L, Math.max(0, t));
-    this.root.rotation.z = env.tiltAngle;
     this.backdrop.update(rt);
     const play = Math.max(0, t);
+    this.updateRoll(env, rt);
+    this.parts.update(dt);
+    this.emitAcc += dt;
+    const emit = this.emitAcc >= 1 / 30;
+    const edt = this.emitAcc;
+    if (emit) this.emitAcc = 0;
+    if (emit) this.ambient(edt, rt);
+    // knife hits: one stroke per chef chop cycle (the chef animation uses the same clock)
+    for (const p of sim.players) {
+      if (p.act !== 'chop' || !p.target) { this.chopN.delete(p.id); continue; }
+      const n = Math.floor(rt * 4.5);
+      if (this.chopN.get(p.id) === n) continue;
+      const first = !this.chopN.has(p.id);
+      this.chopN.set(p.id, n);
+      if (first) continue;
+      const [x, y] = p.target, s = sim.st(x, y);
+      if (!s.item || s.item.kind !== 'ing') continue;
+      const I = INGREDIENTS[s.item.ing];
+      this.squash.set(y * L.W + x, 1);
+      const cx = this.cx(x), cz = this.cz(y);
+      for (let k = 0; k < 6; k++) this.parts.chunk({ x: cx + (Math.random() - 0.5) * 0.15, y: CH + 0.12, z: cz + (Math.random() - 0.5) * 0.15, vx: (Math.random() - 0.5) * 2.2, vy: 1.4 + Math.random() * 1.6, vz: (Math.random() - 0.5) * 2.2, color: [I.c1, I.c2, I.c3][k % 3], s: 0.022 + Math.random() * 0.018, life: 0.7, floor: CH + 0.06 });
+      this.parts.puff({ x: cx, y: CH + 0.1, z: cz, vy: 0.4, life: 0.35, s0: 0.12, s1: 0.4, a: 0.5, color: 0xffffff });
+    }
 
     // items on tiles
     const seen = new Set();
@@ -406,7 +513,7 @@ export class Kitchen {
         const key = itemKey(it);
         let e = this.itemMeshes.get(i);
         if (!e || e.key !== key) {
-          if (e) this.dyn.remove(e.mesh);
+          if (e) { this.dyn.remove(e.mesh); if (e.pile) this.dyn.remove(e.pile); }
           const mesh = makeItem(it);
           e = { key, mesh };
           this.itemMeshes.set(i, e);
@@ -417,11 +524,27 @@ export class Kitchen {
         e.mesh.position.set(this.cx(tl.x), base, this.cz(tl.y));
         if (tl.st === 'pan' || tl.st === 'pot') e.mesh.position.y += Math.sin(rt * 9 + i) * 0.006;
         e.mesh.rotation.y = tl.st === 'board' ? 0.3 : 0;
+        // chopping in progress: the whole ingredient shrinks while a pile of pieces grows beside it
+        const sq = this.squash.get(i) || 0;
+        if (sq > 0) this.squash.set(i, Math.max(0, sq - dt * 7));
+        if (tl.st === 'board' && it.kind === 'ing' && it.s === 'raw' && it.p > 0) {
+          if (!e.pile) { e.pile = makeItem({ kind: 'ing', ing: it.ing, s: 'chopped' }); this.dyn.add(e.pile); }
+          const k = Math.min(1, it.p);
+          e.mesh.scale.set(1 - k * 0.45, (1 - k * 0.5) * (1 - sq * 0.35), 1 - k * 0.45);
+          e.mesh.position.x -= 0.08;
+          e.pile.visible = true;
+          e.pile.scale.setScalar(0.25 + k * 0.75);
+          e.pile.position.set(this.cx(tl.x) + 0.13, base, this.cz(tl.y) + 0.06);
+        } else {
+          e.mesh.scale.set(1, 1 - sq * 0.25, 1);
+          if (e.pile) { this.dyn.remove(e.pile); e.pile = null; }
+        }
       }
       // progress bars
       let prog = null, warn = false, done = false;
       if (it && it.kind === 'ing') {
         if (tl.st === 'board' && it.s === 'raw' && it.p > 0) prog = it.p;
+        if (emit) this.cookFx(tl, it, edt, rt);
         if (['pan', 'pot', 'oven'].includes(tl.st) && !it.dead) {
           const m = INGREDIENTS[it.ing].method, c = T.cook[m];
           if (it.s === 'chopped') prog = it.p / c;
@@ -442,10 +565,19 @@ export class Kitchen {
         if (tl.st === 'sink') this.setStack(i + 0.5, s.dirty, true, tl, 0.0, 0) || this.setStack(i + 0.25, s.clean, false, tl, 0.06, 0.52);
         if (tl.st === 'return') this.setStack(i + 0.5, s.dirty, true, tl, 0.02, 0);
         if (P.arm) P.arm.rotation.z = (sim.beltDir[tl.belt] || 1) * 0.6;
+        if (P.beacon) { const on = s.dirty > 0 && Math.sin(rt * 9) > 0; P.beacon.material.emissiveIntensity = on ? 3 : 0.1; }
+        if (P.strips) P.strips.forEach((st, k) => { st.rotation.x = Math.sin(rt * 2 + k) * 0.04 + (P.flap || 0) * Math.sin(rt * 20 + k) * 0.5; });
+        if (P.flap) P.flap = Math.max(0, P.flap - dt * 1.5);
+        if (P.pad) P.pad.material.emissiveIntensity = 0.3 + Math.sin(rt * 3) * 0.15 + (P.ring || 0) * 2;
+        if (P.bell) { P.bellT = Math.max(0, (P.bellT || 0) - dt); P.bell.position.y = 0.1 + Math.abs(Math.sin(P.bellT * 30)) * P.bellT * 0.15; }
+        if (P.lamps) P.lamps.forEach((b, k) => { b.material.emissiveIntensity = 1.5 + Math.sin(rt * 5 + k * 2) * 0.1; });
+        if (P.tickets) P.tickets.forEach((tk, k) => { tk.rotation.z = (k - 1) * 0.08 + Math.sin(rt * 1.7 + k) * 0.04; tk.visible = k < sim.orders.length; });
+        if (tl.st === 'sink' && emit && sim.players.some((p) => p.act === 'wash' && p.target && p.target[0] === tl.x && p.target[1] === tl.y)) this.washFx(tl, edt);
       }
     });
-    for (const [i, e] of this.itemMeshes) if (!seen.has(i)) { this.dyn.remove(e.mesh); this.itemMeshes.delete(i); }
+    for (const [i, e] of this.itemMeshes) if (!seen.has(i) && Number.isInteger(i)) { this.dyn.remove(e.mesh); if (e.pile) this.dyn.remove(e.pile); this.itemMeshes.delete(i); }
 
+    if (emit) for (const p of sim.players) if (p.act === 'spray') this.sprayFx(p, edt);
     // belts scroll
     for (const f of this.fx) {
       if (f.beltIdx != null) f.belt.offset.x -= dt * L.belts[f.beltIdx].speed * (sim.beltDir[f.beltIdx] || 1);
@@ -468,6 +600,22 @@ export class Kitchen {
       }
       g.visible = g.position.y > -2.8;
     }
+    this.updateHoles(play, dt, rt, emit, edt);
+    (this.moverMeshes || []).forEach((e, i) => {
+      const mx = moverX(e.m, play);
+      e.g.position.set(this.wx(mx) + 0.5, 0, this.cz(e.m.y));
+      const blink = moverWarn(e.m, play) && Math.sin(rt * 12) > 0;
+      e.lights.forEach((l) => { l.material.emissiveIntensity = blink ? 3 : 0.1; });
+      const it = sim.mv[i] && sim.mv[i].item;
+      const key = itemKey(it);
+      if (e.key !== key) {
+        if (e.hold) this.dyn.remove(e.hold);
+        e.hold = it ? makeItem(it) : null;
+        if (e.hold) this.dyn.add(e.hold);
+        e.key = key;
+      }
+      if (e.hold) e.hold.position.set(e.g.position.x, CH, e.g.position.z);
+    });
     for (const { s, g, warn } of this.shiftMeshes) {
       const up = shiftUp(s, play), w = shiftWarn(s, play);
       const ty = up ? 0 : -1.25;
@@ -476,6 +624,259 @@ export class Kitchen {
       warn.children[0].material.opacity = 0.5 + Math.sin(rt * 14) * 0.4;
     }
     this.updateHazards(sim, play, dt, rt, env);
+  }
+
+
+  /** Where a cannonball is: fired from one of the rival's gunports, ballistic arc onto its tile. */
+  cannonFlight(s, target) {
+    const T = 2.2, u = Math.max(0, Math.min(1, 1 - Math.max(0, -s.dt) / T));
+    const rv = this.backdrop.rival;
+    const start = new THREE.Vector3(-6, 0, -this.L.H / 2 - 14);
+    if (rv && rv.muzzles.length) {
+      const m = rv.muzzles[(s.x * 7 + s.y * 3) % rv.muzzles.length];
+      rv.group.updateWorldMatrix(true, false);
+      start.copy(m).applyMatrix4(rv.group.matrixWorld);
+      this.root.worldToLocal(start);
+    }
+    const end = target.clone().setY(target.y + 0.2);
+    const pos = start.clone().lerp(end, u);
+    pos.y += start.distanceTo(end) * 0.32 * 4 * u * (1 - u);
+    // muzzle flash + smoke the moment it leaves the gun
+    const fk = 'f' + s.x + ',' + s.y + ',' + s.t;
+    if (u < 0.08 && !this.struckFx.has(fk)) {
+      this.struckFx.add(fk);
+      const P = this.parts;
+      P.puff({ x: start.x, y: start.y, z: start.z, life: 0.25, s0: 1.2, s1: 2.2, a: 1, color: 0xffc060, glow: true });
+      for (let k = 0; k < 10; k++) P.puff({ x: start.x, y: start.y, z: start.z, vx: (end.x - start.x) * 0.05 + (Math.random() - 0.5) * 0.8, vy: 0.4 + Math.random() * 0.6, vz: (end.z - start.z) * 0.05 + (Math.random() - 0.5) * 0.8, drag: 0.8, life: 2.8, s0: 0.6, s1: 2.2, a: 0.6, color: 0xb8b8b8 });
+      if (this.onCannon) this.onCannon();
+    }
+    return { pos, u };
+  }
+
+  // ------------------------------------------------------------- motion of the whole kitchen
+
+  /** Pirate deck: visible roll that matches the gameplay push, plus heave/pitch from the swell. */
+  updateRoll(env, rt) {
+    const L = this.L;
+    if (this.world.id !== 'pirate') { this.root.rotation.z = 0; return; }
+    const oc = this.backdrop.ocean;
+    const tiltK = L.hz.tilt ? env.tiltAngle / L.hz.tilt.amp : 0;
+    const len = L.W / 2 + 2;
+    const hb = oc ? oc.heightAt(len, 0, rt) : 0, hs = oc ? oc.heightAt(-len, 0, rt) : 0, hc = oc ? oc.heightAt(0, 0, rt) : 0;
+    // push is towards +x when tiltK > 0, so the +x side must dip (negative z rotation)
+    const roll = -tiltK * (0.075 + L.diff * 0.006) + (oc ? (oc.heightAt(0, -3, rt) - oc.heightAt(0, 3, rt)) * 0.03 : 0);
+    const pitch = Math.atan2(hb - hs, len * 2) * 0.35;
+    const e = new THREE.Euler(0, 0, roll + pitch);
+    const pivot = new THREE.Vector3(0, WATERLINE, 0);
+    const v = pivot.clone().applyEuler(e);
+    this.root.rotation.copy(e);
+    this.root.position.set(pivot.x - v.x, pivot.y - v.y + hc * 0.45, pivot.z - v.z);
+  }
+
+  // ------------------------------------------------------------- particles
+
+  /** Ambient per-world atmosphere. */
+  ambient(dt, rt) {
+    const L = this.L, P = this.parts, id = this.world.id;
+    const rx = () => (Math.random() - 0.5) * (L.W + 6), rz = () => (Math.random() - 0.5) * (L.H + 5);
+    const chance = (perSec) => Math.random() < perSec * dt;
+    switch (id) {
+      case 'pirate':
+        if (chance(10)) { const side = Math.random() < 0.5 ? -1 : 1; P.puff({ x: rx(), y: WATERLINE + 0.3, z: side * (L.H / 2 + 1.2), vy: 1.2 + Math.random(), vz: side * 0.4, g: 2, life: 1.2, s0: 0.25, s1: 0.8, a: 0.35, color: 0xffffff }); }
+        break;
+      case 'glacier':
+        for (let k = 0; k < 3; k++) if (chance(14)) P.puff({ x: rx(), y: 6, z: rz(), vx: 0.3, vy: -0.9, life: 7, s0: 0.07, s1: 0.06, a: 0.9, color: 0xffffff, fadeIn: 0.5, fadePow: 6 });
+        break;
+      case 'volcano':
+        for (let k = 0; k < 2; k++) if (chance(12)) P.puff({ x: rx(), y: -1.2, z: rz(), vx: (Math.random() - 0.5) * 0.4, vy: 1 + Math.random() * 1.2, life: 3.5, s0: 0.07, s1: 0.02, a: 1, color: Math.random() < 0.5 ? 0xff7a20 : 0xffc040, glow: true, fadeIn: 0.3 });
+        break;
+      case 'space':
+        if (chance(8)) P.puff({ x: rx(), y: Math.random() * 4, z: rz(), vx: (Math.random() - 0.5) * 0.2, vy: (Math.random() - 0.5) * 0.2, life: 4, s0: 0.05, s1: 0.05, a: 0.9, color: 0x8ae8ff, glow: true, fadeIn: 1, fadePow: 4 });
+        break;
+      case 'clouds':
+        if (chance(3)) P.puff({ x: -L.W / 2 - 4, y: -0.6 + Math.random() * 2.5, z: rz(), vx: 1.2 + Math.random(), life: 9, s0: 1.4, s1: 2.4, a: 0.35, color: 0xffffff, fadeIn: 1.5 });
+        break;
+      case 'jungle':
+        if (chance(6)) P.puff({ x: rx(), y: 0.4 + Math.random() * 2.5, z: rz(), vx: (Math.random() - 0.5) * 0.5, vy: (Math.random() - 0.5) * 0.3, drag: 0.2, life: 3, s0: 0.06, s1: 0.06, a: 1, color: 0xd8ff6a, glow: true, fadeIn: 0.6, fadePow: 3 });
+        if (chance(1.5)) P.chunk({ x: rx(), y: 6, z: rz(), vx: 0.6, vy: 0, color: 0x4ab04a, s: 0.07, sy: 0.15, life: 3.5, floor: 0 });
+        break;
+      case 'factory':
+        if (chance(3)) { const sx = Math.random() < 0.5 ? -1 : 1; P.puff({ x: sx * (L.W / 2 + 0.8), y: 0.4, z: rz(), vy: 1.6, vx: -sx * 0.2, life: 2.2, s0: 0.3, s1: 1.4, a: 0.3, color: 0xe8eef4 }); }
+        break;
+      case 'library':
+        if (chance(10)) P.puff({ x: rx(), y: Math.random() * 3, z: rz(), vy: 0.25, vx: Math.sin(rt + Math.random()) * 0.2, life: 4, s0: 0.05, s1: 0.03, a: 1, color: Math.random() < 0.5 ? 0xffd27a : 0xc89aff, glow: true, fadeIn: 0.8 });
+        break;
+    }
+  }
+
+  cookFx(tl, it, dt, rt) {
+    const P = this.parts, x = this.cx(tl.x), z = this.cz(tl.y);
+    const chance = (n) => Math.random() < n * dt;
+    if (it.dead) return;
+    const burnt = it.s === 'burnt', cooking = it.s === 'chopped' || it.s === 'cooked';
+    if (tl.st === 'pot' && (cooking || burnt)) {
+      if (chance(burnt ? 14 : 9)) P.puff({ x: x + (Math.random() - 0.5) * 0.3, y: CH + 0.45, z: z + (Math.random() - 0.5) * 0.3, vy: 0.9, vx: 0.1, drag: 0.6, life: 1.6, s0: 0.15, s1: 0.65, a: burnt ? 0.55 : 0.32, color: burnt ? 0x2a2a2a : 0xffffff, fadeIn: 0.2 });
+      if (cooking && chance(10)) P.puff({ x: x + (Math.random() - 0.5) * 0.35, y: CH + 0.37, z: z + (Math.random() - 0.5) * 0.35, vy: 0.15, life: 0.35, s0: 0.03, s1: 0.07, a: 0.9, color: 0xe8f6ff, ring: true });
+    } else if (tl.st === 'pan' && (cooking || burnt)) {
+      if (chance(burnt ? 12 : 5)) P.puff({ x: x + (Math.random() - 0.5) * 0.3, y: CH + 0.25, z: z + (Math.random() - 0.5) * 0.3, vy: 0.8, drag: 0.6, life: 1.3, s0: 0.12, s1: 0.5, a: burnt ? 0.55 : 0.22, color: burnt ? 0x2a2a2a : 0xf4f0ea });
+      if (cooking && chance(14)) P.puff({ x: x + (Math.random() - 0.5) * 0.4, y: CH + 0.2, z: z + (Math.random() - 0.5) * 0.4, vx: (Math.random() - 0.5) * 1.2, vy: 1 + Math.random(), vz: (Math.random() - 0.5) * 1.2, g: 6, life: 0.4, s0: 0.035, s1: 0.015, a: 1, color: 0xffd060, glow: true });
+    } else if (tl.st === 'oven' && (cooking || burnt)) {
+      if (chance(burnt ? 10 : 3)) P.puff({ x: x + 0.3, y: 1.95, z: z - 0.3, vy: 1, drag: 0.4, life: 2, s0: 0.15, s1: 0.7, a: burnt ? 0.6 : 0.25, color: burnt ? 0x222222 : 0xdddddd });
+    }
+  }
+
+  washFx(tl, dt) {
+    const x = this.cx(tl.x), z = this.cz(tl.y);
+    for (let k = 0; k < 2; k++) this.parts.puff({ x: x + (Math.random() - 0.5) * 0.45, y: CH + 0.02, z: z + (Math.random() - 0.5) * 0.35, vx: (Math.random() - 0.5) * 0.3, vy: 0.4 + Math.random() * 0.5, drag: 1.5, life: 1.1, s0: 0.04, s1: 0.1, a: 0.85, color: 0xeaf8ff, ring: true });
+    if (Math.random() < 0.5) this.parts.puff({ x: x + (Math.random() - 0.5) * 0.3, y: CH + 0.1, z, vx: (Math.random() - 0.5) * 1.5, vy: 1.6, vz: (Math.random() - 0.5) * 1.5, g: 8, life: 0.5, s0: 0.03, s1: 0.03, a: 0.9, color: 0x9ad8ff });
+  }
+
+  sprayFx(p) {
+    const x = this.wx(p.x) + p.fx * 0.45, z = this.wz(p.y) + p.fy * 0.45;
+    for (let k = 0; k < 4; k++) {
+      const sp = 4 + Math.random() * 2, j = (Math.random() - 0.5) * 0.5;
+      this.parts.puff({ x, y: 0.62, z, vx: (p.fx + j * p.fy) * sp, vy: 0.4 + Math.random() * 0.4, vz: (p.fy - j * p.fx) * sp, drag: 2.6, g: 1.5, life: 0.9, s0: 0.1, s1: 0.55, a: 0.8, color: 0xffffff, floor: 0.08 });
+    }
+  }
+
+  /** Bursts for game events (called by the game). */
+  fxEvent(e) {
+    const P = this.parts;
+    if (e.x == null) return;
+    const x = this.cx(e.x), z = this.cz(e.y);
+    const tl = tileAt(this.L, e.x, e.y);
+    const top = tl && tl.st === 'oven' ? 1.15 : CH;
+    const parts = this.stationParts.get(e.y * this.L.W + e.x);
+    switch (e.type) {
+      case 'deliver':
+        for (let k = 0; k < 26; k++) { const a = Math.random() * Math.PI * 2, v = 1 + Math.random() * 2; P.puff({ x, y: top + 0.3, z, vx: Math.cos(a) * v, vy: 1.5 + Math.random() * 2.5, vz: Math.sin(a) * v, g: 5, drag: 1, life: 1, s0: 0.08, s1: 0.03, a: 1, color: [0xffd23a, 0xff6a3a, 0x6ad8ff, 0x7aff8a][k % 4], glow: true }); }
+        for (let k = 0; k < 14; k++) P.chunk({ x, y: top + 0.4, z, vx: (Math.random() - 0.5) * 3, vy: 2 + Math.random() * 2.5, vz: (Math.random() - 0.5) * 3, color: [0xffd23a, 0xff5a8a, 0x5ad1ff, 0x8aff6a][k % 4], s: 0.03, sx: 1.6, sy: 0.2, life: 1.4, floor: top });
+        if (parts) { parts.bellT = 0.5; parts.ring = 1; setTimeout(() => { parts.ring = 0; }, 400); }
+        break;
+      case 'chopped':
+        for (let k = 0; k < 10; k++) P.puff({ x, y: top + 0.2, z, vx: (Math.random() - 0.5) * 1.5, vy: 1 + Math.random(), vz: (Math.random() - 0.5) * 1.5, g: 3, life: 0.6, s0: 0.06, s1: 0.02, a: 1, color: 0xfff2a0, glow: true });
+        break;
+      case 'washed':
+        for (let k = 0; k < 8; k++) P.puff({ x: x + (Math.random() - 0.5) * 0.4, y: top + 0.15, z: z + (Math.random() - 0.5) * 0.4, vy: 0.6, life: 0.7, s0: 0.07, s1: 0.03, a: 1, color: 0xffffff, glow: true });
+        break;
+      case 'cooked':
+        for (let k = 0; k < 8; k++) P.puff({ x, y: top + 0.4, z, vx: (Math.random() - 0.5), vy: 1.4, vz: (Math.random() - 0.5), g: 2, life: 0.7, s0: 0.07, s1: 0.03, a: 1, color: 0x9aff7a, glow: true });
+        break;
+      case 'extinguished':
+        for (let k = 0; k < 12; k++) P.puff({ x: x + (Math.random() - 0.5) * 0.5, y: top + 0.2, z: z + (Math.random() - 0.5) * 0.5, vy: 1 + Math.random(), drag: 0.8, life: 1.6, s0: 0.2, s1: 0.8, a: 0.5, color: 0xdddddd });
+        break;
+      case 'drop': case 'grab':
+        for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2; P.puff({ x: x + Math.cos(a) * 0.15, y: top + 0.05, z: z + Math.sin(a) * 0.15, vx: Math.cos(a) * 0.6, vz: Math.sin(a) * 0.6, drag: 3, life: 0.35, s0: 0.06, s1: 0.16, a: 0.35, color: 0xffffff }); }
+        break;
+      case 'dirty':
+        if (parts && parts.strips) parts.flap = 1;
+        break;
+      case 'fire':
+        for (let k = 0; k < 16; k++) P.puff({ x, y: top + 0.2, z, vx: (Math.random() - 0.5) * 2, vy: 2 + Math.random() * 2, vz: (Math.random() - 0.5) * 2, g: 3, life: 0.9, s0: 0.07, s1: 0.02, a: 1, color: 0xffa030, glow: true });
+        break;
+    }
+  }
+
+  /** Impact burst for a strike landing on tile x,y. */
+  impact(kind, tx, ty) {
+    const P = this.parts, x = this.cx(tx), z = this.cz(ty);
+    const tl = tileAt(this.L, tx, ty);
+    const y0 = tl && tl.k === 'counter' ? CH : 0;
+    if (kind === 'cannon') {
+      for (let k = 0; k < 22; k++) P.chunk({ x: x + (Math.random() - 0.5) * 0.4, y: y0 + 0.1, z: z + (Math.random() - 0.5) * 0.4, vx: (Math.random() - 0.5) * 5, vy: 3 + Math.random() * 4, vz: (Math.random() - 0.5) * 5, color: [0x8a5a30, 0xb48a5c, 0x5a3a1a][k % 3], s: 0.04 + Math.random() * 0.03, sx: 3, sy: 0.6, life: 1.6, floor: 0 });
+      for (let k = 0; k < 12; k++) P.puff({ x: x + (Math.random() - 0.5) * 0.6, y: y0 + 0.3, z: z + (Math.random() - 0.5) * 0.6, vx: (Math.random() - 0.5) * 1.5, vy: 0.8 + Math.random(), vz: (Math.random() - 0.5) * 1.5, drag: 1.2, life: 1.6, s0: 0.3, s1: 1.1, a: 0.6, color: 0x6a6a6a });
+      for (let k = 0; k < 10; k++) P.puff({ x, y: y0 + 0.3, z, vx: (Math.random() - 0.5) * 3, vy: 1 + Math.random() * 2, vz: (Math.random() - 0.5) * 3, g: 3, life: 0.5, s0: 0.15, s1: 0.05, a: 1, color: 0xffb040, glow: true });
+    } else if (kind === 'embers') {
+      for (let k = 0; k < 18; k++) P.puff({ x, y: y0 + 0.15, z, vx: (Math.random() - 0.5) * 3, vy: 1.5 + Math.random() * 2.5, vz: (Math.random() - 0.5) * 3, g: 6, life: 0.8, s0: 0.08, s1: 0.02, a: 1, color: Math.random() < 0.5 ? 0xff6a10 : 0xffc040, glow: true });
+      for (let k = 0; k < 5; k++) P.puff({ x, y: y0 + 0.2, z, vy: 0.8, drag: 0.5, life: 1.4, s0: 0.2, s1: 0.7, a: 0.4, color: 0x3a3030 });
+    } else if (kind === 'lightning') {
+      for (let k = 0; k < 24; k++) { const a = Math.random() * Math.PI * 2; P.puff({ x, y: y0 + 0.1, z, vx: Math.cos(a) * 4, vy: Math.random() * 3, vz: Math.sin(a) * 4, g: 4, drag: 2, life: 0.5, s0: 0.07, s1: 0.02, a: 1, color: 0xbfe8ff, glow: true }); }
+      P.puff({ x, y: y0 + 0.3, z, life: 0.3, s0: 1.5, s1: 3, a: 0.8, color: 0xbfe8ff, glow: true });
+    }
+  }
+
+  // ------------------------------------------------------------- cannonball holes + flooding
+
+  updateHoles(t, dt, rt, emit, edt) {
+    const L = this.L;
+    if (!L.hz.cannon) return;
+    if (!this.holes) this.holes = new Map();
+    const active = new Set();
+    for (const s of L.hz.cannon) {
+      if (!(t >= s.t && t < s.t + HOLE_TIME)) continue;
+      const i = s.y * L.W + s.x;
+      active.add(i);
+      let h = this.holes.get(i);
+      if (!h) { h = this.makeHole(s.x, s.y); this.holes.set(i, h); this.setSlab(i, false); }
+      const age = t - s.t, left = s.t + HOLE_TIME - t;
+      const cx = this.cx(s.x), cz = this.cz(s.y);
+      // water surges up through the hole, then sloshes just under deck level
+      const surge = Math.min(1, age / 0.9);
+      h.water.position.y = -1.1 + surge * 0.98 + Math.sin(rt * 5) * 0.03;
+      h.water.material.opacity = 0.9;
+      h.foam.position.y = h.water.position.y + 0.005;
+      h.foam.rotation.z = rt * 0.6;
+      // flood puddle spreads across the deck around the hole
+      const spread = Math.min(1, age / 2.2) * Math.min(1, left / 1.2);
+      h.puddle.scale.setScalar(0.3 + spread * 1.25);
+      h.puddle.material.opacity = 0.55 * spread;
+      // patching: planks slide back over the hole in the last second
+      const patch = Math.max(0, 1 - left / 1.1);
+      h.patch.forEach((pl, k) => { pl.visible = patch > k * 0.25; pl.scale.x = Math.min(1, (patch - k * 0.25) * 3); });
+      if (emit) {
+        const gush = age < 2.5 ? 1 : 0.25;
+        for (let k = 0; k < Math.ceil(5 * gush); k++) this.parts.puff({ x: cx + (Math.random() - 0.5) * 0.4, y: h.water.position.y + 0.05, z: cz + (Math.random() - 0.5) * 0.4, vx: (Math.random() - 0.5) * 1.6, vy: (1.5 + Math.random() * 3) * gush, vz: (Math.random() - 0.5) * 1.6, g: 9, drag: 0.4, life: 0.8, s0: 0.12, s1: 0.22, a: 0.75, color: Math.random() < 0.5 ? 0xffffff : 0x8ad0ee, floor: 0.02 });
+        if (Math.random() < 0.6) { const a = Math.random() * Math.PI * 2, r = 0.4 + Math.random() * spread * 0.9; this.parts.puff({ x: cx + Math.cos(a) * r, y: 0.03, z: cz + Math.sin(a) * r, life: 0.8, s0: 0.05, s1: 0.2, a: 0.6, color: 0xeaf8ff, ring: true }); }
+      }
+    }
+    for (const [i, h] of this.holes) if (!active.has(i)) { this.root.remove(h.g); this.holes.delete(i); this.setSlab(i, true); }
+  }
+
+  setSlab(i, on) {
+    const k = this.slabIdx.get(i);
+    if (k == null) return;
+    const tl = this.L.tiles[i];
+    const o = new THREE.Object3D();
+    o.position.set(this.cx(tl.x), -0.15, this.cz(tl.y)); o.scale.set(1, 0.3, 1);
+    if (!on) o.scale.set(0.0001, 0.0001, 0.0001);
+    o.updateMatrix(); this.slabTop.setMatrixAt(k, o.matrix); this.slabTop.instanceMatrix.needsUpdate = true;
+    o.position.y = -0.55; o.scale.set(on ? 0.98 : 0.0001, on ? 0.5 : 0.0001, on ? 0.98 : 0.0001);
+    o.updateMatrix(); this.slabBot.setMatrixAt(k, o.matrix); this.slabBot.instanceMatrix.needsUpdate = true;
+  }
+
+  makeHole(tx, ty) {
+    const g = new THREE.Group();
+    g.position.set(this.cx(tx), 0, this.cz(ty));
+    const wood = mat(0x8a5a30, { rough: 0.8 }), dark = mat(0x3a2412, { rough: 0.9 });
+    // splintered plank stubs around the rim of the hole (pointing inwards / upwards)
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2 + Math.random() * 0.3;
+      const len = 0.12 + Math.random() * 0.14;
+      const sp = part(cone(4), k % 3 ? wood : dark, [Math.cos(a) * (0.44 - len * 0.3), -0.04, Math.sin(a) * (0.44 - len * 0.3)], [0.05, len, 0.02], [0, 0, 0]);
+      sp.lookAt(new THREE.Vector3(0, 0.6, 0).add(g.position).sub(g.position));
+      sp.rotation.set(Math.sin(a) * (1.2 + Math.random() * 0.4), 0, -Math.cos(a) * (1.2 + Math.random() * 0.4));
+      g.add(sp);
+    }
+    // ragged rim + side walls of the broken deck
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.48, 0.3, 14, 1, true), new THREE.MeshStandardMaterial({ color: 0x4a2c14, roughness: 0.9, side: THREE.BackSide }));
+    rim.position.y = -0.15;
+    g.add(rim);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(0.47, 24), new THREE.MeshStandardMaterial({ color: 0x1a6a8a, roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.9 }));
+    water.rotation.x = -Math.PI / 2;
+    g.add(water);
+    const foam = new THREE.Mesh(new THREE.RingGeometry(0.25, 0.46, 24), new THREE.MeshBasicMaterial({ map: foamTex(), transparent: true, opacity: 0.85, depthWrite: false }));
+    foam.rotation.x = -Math.PI / 2;
+    g.add(foam);
+    const pm = new THREE.MeshStandardMaterial({ color: 0x6ab8d8, map: puddleTex().clone(), transparent: true, opacity: 0, roughness: 0.04, metalness: 0.25, depthWrite: false });
+    pm.map.needsUpdate = true;
+    const puddle = new THREE.Mesh(new THREE.CircleGeometry(1, 32), pm);
+    puddle.rotation.x = -Math.PI / 2; puddle.position.y = 0.008; puddle.renderOrder = 2;
+    puddle.receiveShadow = true;
+    g.add(puddle);
+    const patch = [];
+    for (let k = 0; k < 4; k++) { const pl = part(box(), mat(0xc8986a, { rough: 0.7 }), [0, 0.01, -0.36 + k * 0.24], [0.98, 0.04, 0.22]); pl.visible = false; g.add(pl); patch.push(pl); }
+    this.root.add(g);
+    return { g, water, foam, puddle, patch };
   }
 
   setStack(key, n, dirty, tl, y, off) {
@@ -500,27 +901,34 @@ export class Kitchen {
     let b = this.bars.get(i);
     if (prog == null && !warn && !done) { if (b) b.g.visible = false; return; }
     if (!b) {
+      // all parts opaque + depthTest off + explicit renderOrder, so the fill always draws over the frame
       const g = new THREE.Group();
-      const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.13), new THREE.MeshBasicMaterial({ color: 0x14141c, transparent: true, opacity: 0.85, depthTest: false }));
-      const fill = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.08), new THREE.MeshBasicMaterial({ color: 0x5ad15a, depthTest: false }));
-      fill.position.z = 0.001;
-      fill.geometry.translate(0.28, 0, 0);
-      fill.position.x = -0.28;
-      const icon = new THREE.Mesh(new THREE.CircleGeometry(0.15, 24), new THREE.MeshBasicMaterial({ map: textTex('✔', { w: 64, h: 64, bg: '#2fbf5a', font: '900 44px sans-serif' }), depthTest: false }));
-      const warnI = new THREE.Mesh(new THREE.CircleGeometry(0.17, 24), new THREE.MeshBasicMaterial({ map: textTex('!', { w: 64, h: 64, bg: '#ff3a3a', font: '900 48px Fredoka, sans-serif' }), depthTest: false }));
-      g.add(bg, fill, icon, warnI);
-      g.renderOrder = 10;
-      [bg, fill, icon, warnI].forEach((m) => { m.renderOrder = 10; });
+      const ui = (geo, color, order, map) => { const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, map, depthTest: false, depthWrite: false, toneMapped: false })); m.renderOrder = order; return m; };
+      const frame = ui(roundRect(0.86, 0.2, 0.1), 0xffffff, 20);
+      const bg = ui(roundRect(0.8, 0.14, 0.07), 0x1a1a26, 21);
+      const fill = ui(new THREE.PlaneGeometry(0.76, 0.1).translate(0.38, 0, 0), 0x5ad15a, 22);
+      fill.position.x = -0.38;
+      const shine = ui(new THREE.PlaneGeometry(0.76, 0.03).translate(0.38, 0.025, 0), 0xffffff, 23);
+      shine.material.transparent = true; shine.material.opacity = 0.35; shine.position.x = -0.38;
+      const icon = ui(new THREE.CircleGeometry(0.17, 28), 0xffffff, 24, textTex('✔', { w: 64, h: 64, bg: '#2fbf5a', font: '900 44px sans-serif' }));
+      const warnI = ui(new THREE.CircleGeometry(0.19, 28), 0xffffff, 24, textTex('!', { w: 64, h: 64, bg: '#ff3a3a', font: '900 48px Fredoka, sans-serif' }));
+      g.add(frame, bg, fill, shine, icon, warnI);
       this.root.add(g);
-      b = { g, bg, fill, icon, warnI };
+      b = { g, frame, bg, fill, shine, icon, warnI };
       this.bars.set(i, b);
     }
     b.g.visible = true;
-    b.g.position.set(this.cx(tl.x), (tl.st === 'oven' ? 1.75 : 1.6), this.cz(tl.y));
-    b.g.quaternion.copy(camera.quaternion);
+    b.g.position.set(this.cx(tl.x), (tl.st === 'oven' ? 1.85 : 1.65), this.cz(tl.y));
+    // face the camera even while the deck rolls
+    b.g.quaternion.copy(this.root.getWorldQuaternion(this.tmpQ).invert()).multiply(camera.quaternion);
     const showBar = prog != null;
-    b.bg.visible = b.fill.visible = showBar;
-    if (showBar) { b.fill.scale.x = Math.max(0.001, Math.min(1, prog)); b.fill.material.color.setHex(tl.st === 'sink' ? 0x4ab8ff : tl.st === 'board' ? 0xffcf3a : 0x5ad15a); }
+    b.frame.visible = b.bg.visible = b.fill.visible = b.shine.visible = showBar;
+    if (showBar) {
+      const k = Math.max(0.001, Math.min(1, prog));
+      b.fill.scale.x = k; b.shine.scale.x = k;
+      b.fill.material.color.setHex(tl.st === 'sink' ? 0x4ab8ff : tl.st === 'board' ? 0xffc21a : 0x4ad15a);
+      b.g.scale.setScalar(1 + (tl.st === 'board' ? Math.max(0, (this.squash.get(i) || 0)) * 0.08 : 0));
+    } else b.g.scale.setScalar(1);
     b.icon.visible = done && !warn;
     b.warnI.visible = warn;
     if (warn) b.warnI.scale.setScalar(1 + Math.abs(Math.sin(rt * 10)) * 0.3);
@@ -602,32 +1010,26 @@ export class Kitchen {
       e.ball.visible = s.kind === 'cannon' && s.dt < 0;
       e.ember.visible = s.kind === 'embers' && s.dt < 0;
       e.bolt.visible = s.kind === 'lightning' && s.dt >= 0 && s.dt < 0.25;
-      const fall = Math.min(5, Math.max(0, -s.dt) * 3);
-      e.ball.position.set(-fall * 0.5, 0.2 + fall, 0);
+      const fall = Math.min(6, Math.max(0, -s.dt) * 3);
+      // cannonballs arc in from the rival ship astern; embers drop; lightning strikes straight down
+      if (s.kind === 'cannon') {
+        const fl = this.cannonFlight(s, e.g.position);
+        e.ball.position.copy(fl.pos).sub(e.g.position);
+        e.ball.visible = s.dt < 0 && fl.u > 0.02;
+        if (e.ball.visible && Math.random() < 0.7) this.parts.puff({ x: fl.pos.x, y: fl.pos.y, z: fl.pos.z, vy: 0.15, life: 0.9, s0: 0.12, s1: 0.5, a: 0.3, color: 0x9a9a9a });
+      } else e.ball.position.set(0, 0.2 + fall, 0);
       e.ember.position.set(0, 0.2 + fall, 0);
       e.ember.rotation.set(rt * 4, rt * 3, 0);
       e.bolt.rotation.z = Math.sin(rt * 60) * 0.08;
     }
     for (; si < this.strikePool.length; si++) this.strikePool[si].g.visible = false;
-    // cannonball holes
-    let hi = 0;
-    if (L.hz.cannon) for (const s of L.hz.cannon) {
-      if (!(t >= s.t && t < s.t + HOLE_TIME)) continue;
-      let e = this.holePool[hi++];
-      if (!e) {
-        const g = new THREE.Group();
-        g.add(part(new THREE.CircleGeometry(0.46, 24), mat(0x0a2a3a, { rough: 1 }), [0, 0.012, 0], 1, [-Math.PI / 2, 0, 0]));
-        for (let k = 0; k < 7; k++) g.add(part(box(), mat(0x6a4422), [Math.cos(k) * 0.45, 0.03, Math.sin(k) * 0.45], [0.18, 0.05, 0.06], [0, k * 1.3, 0.3]));
-        this.root.add(g);
-        e = { g };
-        this.holePool.push(e);
-      }
-      e.g.visible = true;
-      e.g.position.set(this.cx(s.x), 0, this.cz(s.y));
-      const left = s.t + HOLE_TIME - t;
-      e.g.scale.setScalar(left < 1 ? left : 1);
+    for (const s of strikes) {
+      if (s.dt < 0) continue;
+      const key = s.kind + s.x + ',' + s.y + ',' + Math.round((t - s.dt) * 10);
+      if (this.struckFx.has(key)) continue;
+      this.struckFx.add(key);
+      this.impact(s.kind, s.x, s.y);
     }
-    for (; hi < this.holePool.length; hi++) this.holePool[hi].g.visible = false;
     // cuckoo
     if (this.bird) {
       const ck = cuckooAt(L, t);
@@ -666,11 +1068,59 @@ export class Kitchen {
 
   setHighlight(target) {
     if (!target) { this.highlight.visible = false; return; }
-    const tl = tileAt(this.L, target[0], target[1]);
     this.highlight.visible = true;
+    if (target[2] != null && this.moverMeshes[target[2]]) { const p = this.moverMeshes[target[2]].g.position; this.highlight.position.set(p.x, CH + 0.02, p.z); return; }
+    const tl = tileAt(this.L, target[0], target[1]);
     this.highlight.position.set(this.cx(target[0]), (tl.st === 'oven' ? 1.15 : tl.st === 'trash' ? 0.9 : CH) + 0.02, this.cz(target[1]));
   }
 
   /** World position of a tile (for popups). */
   tilePos(x, y, h = 1.2) { const v = new THREE.Vector3(this.cx(x), h, this.cz(y)); return this.root.localToWorld(v); }
+}
+
+function roundRect(w, h, r) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r); s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r); s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y);
+  return new THREE.ShapeGeometry(s, 6);
+}
+
+const texCache = {};
+function canvasT(key, w, h, draw) {
+  if (texCache[key]) return texCache[key];
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return (texCache[key] = t);
+}
+/** Warm dining room seen through the serving hatch. */
+function diningTex() {
+  return canvasT('dining', 128, 180, (g, w, h) => {
+    const grd = g.createLinearGradient(0, 0, 0, h);
+    grd.addColorStop(0, '#5a2a1a'); grd.addColorStop(0.55, '#c86a2a'); grd.addColorStop(1, '#3a1a10');
+    g.fillStyle = grd; g.fillRect(0, 0, w, h);
+    // hanging lamps
+    for (const x of [30, 98]) { const r = g.createRadialGradient(x, 40, 2, x, 40, 34); r.addColorStop(0, 'rgba(255,240,180,1)'); r.addColorStop(1, 'rgba(255,200,120,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); g.fillStyle = '#2a1408'; g.fillRect(x - 1, 0, 2, 32); g.beginPath(); g.moveTo(x - 10, 40); g.lineTo(x + 10, 40); g.lineTo(x + 5, 32); g.lineTo(x - 5, 32); g.fill(); }
+    // diners' silhouettes and tables
+    g.fillStyle = 'rgba(40,16,8,0.85)';
+    for (const [x, s] of [[24, 1], [64, 1.15], [104, 0.95]]) { g.beginPath(); g.arc(x, 110 - 12 * s, 9 * s, 0, 7); g.fill(); g.fillRect(x - 12 * s, 110, 24 * s, 30); }
+    g.fillStyle = 'rgba(30,12,6,0.95)'; g.fillRect(0, 138, w, 8);
+    g.fillStyle = 'rgba(255,230,190,0.6)'; g.fillRect(0, 136, w, 2);
+  });
+}
+function foamTex() {
+  return canvasT('foam', 128, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(255,255,255,${0.3 + Math.random() * 0.6})`; g.beginPath(); g.arc(Math.random() * w, Math.random() * h, 1 + Math.random() * 4, 0, 7); g.fill(); }
+  });
+}
+function puddleTex() {
+  return canvasT('puddle', 256, 256, (g, w, h) => {
+    const r = g.createRadialGradient(w / 2, h / 2, 10, w / 2, h / 2, w / 2);
+    r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.75, 'rgba(255,255,255,0.9)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = r; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(200,240,255,0.9)'; g.lineWidth = 2;
+    for (let i = 0; i < 14; i++) { g.beginPath(); g.arc(w / 2, h / 2, 18 + i * 8 + Math.random() * 4, Math.random() * 6, Math.random() * 6 + 2); g.stroke(); }
+  });
 }

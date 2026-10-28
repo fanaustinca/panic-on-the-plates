@@ -1,7 +1,8 @@
 // One match: owns the Three.js scene for a level, the Sim (host) or its mirror (client), the
 // cooks, input, network traffic and the in-game HUD feed.
 import * as THREE from 'three';
-import { WORLDS, COLORS, SLOT_COLORS, NET_HZ, INGREDIENTS, METHOD_LABEL } from './config.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { WORLDS, COLORS, SLOT_COLORS, NET_HZ, INGREDIENTS, METHOD_LABEL, T, upgMul } from './config.js';
 import { buildLevel } from './levels.js';
 import { Sim, movePlayer, findTarget, starsFor, describe, COUNTDOWN } from './sim.js';
 import { envAt, cuckooAt, strikesNear } from './hazards.js';
@@ -69,8 +70,15 @@ export class Game {
     scene.add(sun);
     scene.add(new THREE.AmbientLight(0xffffff, 0.25));
     this.kitchen = new Kitchen(this.L);
-    scene.add(this.kitchen.root);
-    this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 200);
+    scene.add(this.kitchen.root, this.kitchen.worldGroup);
+    this.kitchen.onCannon = () => sfx.cannonFire();
+    // soft studio reflections so steel, brass and glazes read as real materials
+    const pm = new THREE.PMREMGenerator(this.renderer);
+    this.envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+    pm.dispose();
+    scene.environment = this.envTex;
+    scene.environmentIntensity = 0.28;
+    this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 260);
     this.chefs = new Map();
     for (const p of this.sim.players) this.addChef(p);
     this.fit();
@@ -83,7 +91,7 @@ export class Game {
     c.ring = ring;
     c.root.add(ring);
     c.root.add(c.blob);
-    c.root.scale.setScalar(1.22);
+    c.root.scale.setScalar(1.4);
     this.kitchen.dyn.add(c.root);
     c.disp = { x: p.x, y: p.y, z: 0 };
     this.chefs.set(p.id, c);
@@ -103,7 +111,9 @@ export class Game {
     this.camera.aspect = aspect;
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
-    const W = this.L.W + 1.2, H = this.L.H + 1.0;
+    // the galleon gets extra room so its bow, stern and rigging frame the kitchen
+    const pad = this.world.id === 'pirate' ? [4.2, 3.2] : [2.2, 1.8];
+    const W = this.L.W + pad[0], H = this.L.H + pad[1];
     const elev = THREE.MathUtils.degToRad(52);
     // distance so the kitchen fits horizontally and (foreshortened) vertically, leaving room for the HUD
     const dW = (W / 2) / Math.tan(hfov / 2) / 0.9;
@@ -114,6 +124,10 @@ export class Game {
     this.camLook = new THREE.Vector3(0, 0, 0.45);
     this.camera.lookAt(this.camLook);
     this.camera.updateProjectionMatrix();
+    // keep fog out of the kitchen itself: it only softens the far backdrop
+    this.scene.fog.near = d * 1.35; this.scene.fog.far = d * 3.2;
+    const db = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.kitchen.parts.setScale(db.y / 2 * this.camera.projectionMatrix.elements[5]);
   }
 
   // ------------------------------------------------------------- network
@@ -157,7 +171,7 @@ export class Game {
     const jump = canAct && inp.consumeJump();
     if (canAct && jump && me.z <= 0.001 && !me.falling) sfx.jump();
     if (me) {
-      me.target = me.ko > 0 ? null : findTarget(this.L, me);
+      me.target = me.ko > 0 ? null : findTarget(this.L, me, Math.max(0, t));
       if (canAct) {
         if (inp.consumePress()) {
           if (this.isHost) { this.sim.press(this.selfId, me.target); this.sim.setWork(this.selfId, true, me.target); }
@@ -216,7 +230,7 @@ export class Game {
     const sim = this.sim;
     const res = {
       level: this.level, score: sim.score, delivered: sim.delivered, failed: sim.failed, tips: sim.tips,
-      stars: starsFor(this.L, sim.score), thresholds: this.L.stars,
+      stars: starsFor(this.L, sim.score, sim.players.length), thresholds: sim.stars,
       players: sim.players.map((p) => ({ id: p.id, name: p.name, slot: p.slot, outfit: p.outfit, color: p.color, skin: p.skin, stats: p.stats })),
     };
     this.onEnd(res);
@@ -246,7 +260,7 @@ export class Game {
       if (jumpBack) { c.disp.x = tx; c.disp.y = ty; }
       c.disp.x += (tx - c.disp.x) * k; c.disp.y += (ty - c.disp.y) * k; c.disp.z += (tz - c.disp.z) * (isSelf ? 1 : 0.5);
       const ko = p.ko > 0;
-      c.root.visible = !ko || (p.ko > 2.4 && p.falling);
+      c.root.visible = !ko || (p.ko > T.respawn * upgMul(p, 'recover') - 0.6 && p.falling);
       c.root.position.set(this.kitchen.wx(c.disp.x), Math.max(-3, c.disp.z), this.kitchen.wz(c.disp.y));
       const ang = Math.atan2(fx, fy);
       let da = ang - c.root.rotation.y;
@@ -292,6 +306,7 @@ export class Game {
   handleEvent(e) {
     const hud = this.hud, K = this.kitchen;
     const at = (x, y, h) => K.tilePos(x, y, h);
+    K.fxEvent(e);
     switch (e.type) {
       case 'grab': sfx.grab(); break;
       case 'drop': sfx.drop(); break;
@@ -339,7 +354,9 @@ export class Game {
     const H = p.held;
     if (H && H.kind === 'ext') return 'Hold <kbd>Enter</kbd> to spray';
     if (!p.target) return H ? `Carrying ${describe(H)}` : '';
-    const tl = tileAt(this.L, ...p.target), s = sim.st(...p.target);
+    const verb0 = (v) => `<kbd>Enter</kbd> ${v}`;
+    if (p.target[2] != null) { const I = sim.mv[p.target[2]] && sim.mv[p.target[2]].item; return H ? verb0(I ? 'Combine' : 'Put down') : I ? verb0('Pick up') : ''; }
+    const tl = tileAt(this.L, p.target[0], p.target[1]), s = sim.st(p.target[0], p.target[1]);
     if (s.fire) return 'On fire! Use the extinguisher';
     const I = s.item;
     const verb = (v) => `<kbd>Enter</kbd> ${v}`;
@@ -364,5 +381,6 @@ export class Game {
 
   dispose() {
     this.hud.endMatch();
+    if (this.envTex) this.envTex.dispose();
   }
 }

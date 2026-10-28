@@ -2,7 +2,9 @@
 // actually be cooked and delivered through the real Sim rules (cook teleported between stations).
 import { WORLDS, INGREDIENTS, T } from '../src/config.js';
 import { buildLevel, validate } from '../src/levels.js';
-import { Sim, movePlayer, starsFor } from '../src/sim.js';
+import { Sim, movePlayer, starsFor, findTarget, starThresholds } from '../src/sim.js';
+import { moverX } from '../src/hazards.js';
+import { MP_LEVEL } from '../src/levels.js';
 import { envAt, deadlyCells } from '../src/hazards.js';
 
 let passed = 0, failed = 0;
@@ -251,6 +253,67 @@ test('snapshot round trip', () => {
   cl.applySnapshot(JSON.parse(json), 'b');
   assert(cl.orders.length === host.orders.length && Math.abs(cl.t - host.t) < 1e-3);
   assert(json.length < 6000, 'snapshot size ' + json.length);
+});
+
+test('every world has a bigger multiplayer kitchen with extra workstations', () => {
+  for (let w = 0; w < 8; w++) {
+    const L = buildLevel(w, MP_LEVEL), C = buildLevel(w, 5);
+    assert(validate(L).ok, `${L.id} invalid`);
+    assert(L.W * L.H > C.W * C.H, `${L.id} not bigger`);
+    const n = (M, st) => M.tiles.filter((t) => t.st === st).length;
+    assert(n(L, 'board') >= 3 && n(L, 'sink') >= 2, `${L.id} needs more stations`);
+    assert(L.spawns.length === 4, 'four spawns');
+  }
+});
+
+test('moving counters glide, block cooks, and carry items', () => {
+  const L = levels.find((q) => q.movers && q.movers.length) || buildLevel(3, 7);
+  assert(L.movers.length, 'some level has a mover');
+  const m = L.movers[0];
+  const xs = [];
+  for (let t = 0; t < m.period; t += 0.25) xs.push(moverX(m, t));
+  assert(Math.min(...xs) === m.x0 && Math.max(...xs) === m.x1, 'travels the full rail');
+  const sim = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }]);
+  for (let i = 0; i < 80; i++) sim.step(0.05);
+  const p = sim.players[0];
+  // stand right where the counter will be and let it arrive: the cook must be pushed off it
+  const t = sim.t, mx = moverX(m, t);
+  p.x = mx + 0.5; p.y = m.y + 0.5; p.z = 0; p.local = true; p.inp = { mx: 0, my: 0 };
+  sim.step(0.02);
+  assert(!(p.x > mx && p.x < mx + 1 && p.y > m.y && p.y < m.y + 1), 'cook pushed out of the counter');
+  // face it from above and put a plate on it
+  p.x = moverX(m, sim.t) + 0.5; p.y = m.y - 0.45; p.fx = 0; p.fy = 1;
+  const tg = findTarget(L, p, sim.t);
+  assert(tg && tg[2] === 0, 'targets the moving counter ' + JSON.stringify(tg));
+  p.held = { kind: 'plate', n: 1, c: [], dirty: false };
+  sim.press('a', tg);
+  assert(sim.mv[0].item && sim.mv[0].item.kind === 'plate', 'item placed on the mover');
+  const snap = JSON.parse(JSON.stringify(sim.snapshot()));
+  const mirror = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }]);
+  mirror.applySnapshot(snap, 'x');
+  assert(mirror.mv[0].item && mirror.mv[0].item.kind === 'plate', 'mover items sync');
+});
+
+test('solo shifts get fewer, slower orders and lower star targets', () => {
+  const L = buildLevel(0, 5);
+  const roster = (n) => Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P', outfit: 'chef', color: i }));
+  const s1 = new Sim(L, roster(1)), s4 = new Sim(L, roster(4));
+  assert(s1.maxOrders < s4.maxOrders, `max orders ${s1.maxOrders} vs ${s4.maxOrders}`);
+  assert(s1.orderGap > s4.orderGap, 'solo orders arrive slower');
+  assert(starThresholds(L, 1)[2] < starThresholds(L, 4)[2], 'solo star targets lower');
+  s1.step(4); s4.step(4);
+  assert(s1.orders.length === 1 && s4.orders.length === 2, `opening orders ${s1.orders.length}/${s4.orders.length}`);
+});
+
+test('upgrades speed up chopping and running', () => {
+  const L = buildLevel(0, 0);
+  const sim = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0, upg: { chop: 5, speed: 5 } }, { id: 'b', name: 'B', outfit: 'chef', color: 1, upg: { chop: 99 } }]);
+  assert(sim.players[1].upg.chop === 5, 'tiers are clamped');
+  const p = sim.players[0];
+  const q = { ...p, upg: { speed: 0 }, vx: 0, vy: 0 };
+  const a = { ...p, vx: 0, vy: 0 };
+  for (let i = 0; i < 30; i++) { movePlayer(L, a, { mx: 1, my: 0 }, 0.02, 1); movePlayer(L, q, { mx: 1, my: 0 }, 0.02, 1); }
+  assert(Math.abs(a.vx) > Math.abs(q.vx) * 1.2, `upgraded run speed ${a.vx} vs ${q.vx}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

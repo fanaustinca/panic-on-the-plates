@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode } from './items.js';
 import { glowTex } from './textures.js';
+import { buildShip, WATERLINE } from './ship.js';
+import { makeOcean } from './ocean.js';
 
 function patternTex(draw, rep) {
   const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -46,6 +48,8 @@ export const STYLE = {
 /** Build backdrop group for a world; returns { group, update(t) }. */
 export function buildBackdrop(worldId, W, H, sky) {
   const g = new THREE.Group();
+  const world = new THREE.Group(); // stays put while the kitchen root rolls
+  let ocean = null, rivalInfo = null;
   const r = rng(worldId.length * 97 + W);
   const updaters = [];
   const span = Math.max(W, H) * 4;
@@ -64,38 +68,31 @@ export function buildBackdrop(worldId, W, H, sky) {
   };
   switch (worldId) {
     case 'pirate': {
-      const seaM = new THREE.MeshStandardMaterial({ map: seaTex(), roughness: 0.3, metalness: 0.05, flatShading: true });
-      updaters.push((t) => { seaM.map.offset.set(t * 0.012, t * 0.02); });
-      const sea = plane(0, -2.2, { material: seaM, seg: 48 });
-      const pos = sea.geometry.attributes.position;
-      const base = Float32Array.from(pos.array);
+      // the galleon rides on the kitchen root (rolls with the deck); the ocean stays level in the world
+      const ship = buildShip(W, H);
+      g.add(ship.group);
+      updaters.push(ship.update);
+      ocean = makeOcean({ preset: 'sea', y: WATERLINE, hull: ship.hull, deep: 0x06304e, shallow: 0x1a8a9c, sky: 0x8ec8f0, horizon: 0xd8eeff, fog: 0xbfe3ff, fogNear: 34, fogFar: 95 });
+      world.add(ocean.mesh);
+      // a rival galleon off the stern quarter, broadside on, lobbing the cannonballs
+      const rv = buildShip(7, 4, { rival: true });
+      const rival = rv.group;
+      rival.scale.setScalar(0.85);
+      rival.position.set(-W * 0.32, 0, -H / 2 - 10.5);
+      rival.rotation.y = 0.18; // broadside towards our galleon
+      world.add(rival);
+      rivalInfo = { group: rival, muzzles: rv.muzzles };
+      updaters.push(rv.update);
       updaters.push((t) => {
-        for (let i = 0; i < pos.count; i++) { const x = base[i * 3], y = base[i * 3 + 1]; pos.array[i * 3 + 2] = Math.sin(x * 0.5 + t * 1.2) * 0.18 + Math.cos(y * 0.6 + t * 0.9) * 0.15; }
-        pos.needsUpdate = true; sea.geometry.computeVertexNormals();
+        rival.position.y = WATERLINE * (1 - 0.85) + ocean.heightAt(rival.position.x, rival.position.z, t) * 0.8;
+        rival.rotation.z = Math.sin(t * 0.55) * 0.035;
+        rival.rotation.x = Math.sin(t * 0.4 + 1) * 0.02;
       });
-      // hull beneath the deck
-      const hull = part(box(), mat(0x5a3418, { rough: 0.8 }), [0, -1.1, 0], [W + 0.6, 1.8, H + 0.4]);
-      g.add(hull);
-      g.add(part(box(), mat(0xe8d8b0), [0, -0.35, H / 2 + 0.22], [W + 0.6, 0.12, 0.05]));
-      // masts and sails behind the kitchen
-      for (const mx of [-W / 3, W / 3]) {
-        g.add(part(cyl(12), mat(0x6a4422), [mx, 2.5, -H / 2 - 1.2], [0.18, 7, 0.18]));
-        const sail = part(box(), mat(0xf4ecd8, { rough: 0.9 }), [mx, 3.6, -H / 2 - 1.0], [3.4, 2.6, 0.06]);
-        g.add(sail);
-        updaters.push((t) => { sail.scale.z = 0.06 + Math.sin(t * 1.3 + mx) * 0.03; sail.rotation.x = Math.sin(t * 0.8 + mx) * 0.05; });
-        g.add(part(box(), mat(0x6a4422), [mx, 5, -H / 2 - 1.15], [3.8, 0.12, 0.12]));
-      }
-      const flag = part(box(), mat(0x111111), [W / 3 + 0.6, 6.2, -H / 2 - 1.2], [1.0, 0.6, 0.02]);
-      g.add(flag);
-      g.add(part(sph(10), mat(0xffffff), [W / 3 + 0.6, 6.25, -H / 2 - 1.18], 0.13));
-      updaters.push((t) => { flag.rotation.y = Math.sin(t * 3) * 0.25; });
-      scatter(6, 1.6, 2.6, (x, z) => { g.add(part(cyl(12), mat(0x8a5a2a), [x, -1.8, z], [0.4, 0.8, 0.4])); });
       break;
     }
     case 'glacier': {
-      const wM = new THREE.MeshStandardMaterial({ map: seaTex('#1f6f96', '#5ab0d8'), roughness: 0.15, metalness: 0.2 });
-      plane(0, -1.6, { material: wM });
-      updaters.push((t) => { wM.map.offset.set(t * 0.006, t * 0.01); });
+      ocean = makeOcean({ preset: 'calm', y: -1.6, deep: 0x0b3c58, shallow: 0x3aa6c8, sky: 0xd8f0ff, horizon: 0xf0fbff, foam: 0xffffff, fog: 0xdff3ff, fogNear: 34, fogFar: 95, ampScale: 0.8 });
+      world.add(ocean.mesh);
       scatter(30, 1.05, 2.4, (x, z) => { const s = 0.3 + r() * 0.6; g.add(part(box(), mat(0xeaf8ff, { rough: 0.4 }), [x, -1.55, z], [s * 2, 0.15, s * 1.6], [0, r() * 3, 0])); });
       scatter(14, 1.3, 2.8, (x, z) => {
         const s = 0.8 + r() * 2.2;
@@ -201,5 +198,6 @@ export function buildBackdrop(worldId, W, H, sky) {
       break;
     }
   }
-  return { group: g, update: (t) => updaters.forEach((f) => f(t)) };
+  if (ocean) updaters.push((t) => ocean.update(t));
+  return { group: g, world, ocean, rival: rivalInfo, update: (t) => updaters.forEach((f) => f(t)) };
 }

@@ -98,7 +98,7 @@ export const WORLDS = [
       'Gear-Corn Roast', 'Torque & Beans', 'Quality Control Combo', 'Heavy Metal Bake', 'Production Line Feast'],
   },
   {
-    id: 'library', name: 'Enchanted Clockwork Library', blurb: 'Time dilation and The Cuckoo Trap.',
+    id: 'library', name: 'Clockwork', blurb: 'Time dilation and The Cuckoo Trap.',
     outfit: 'wizard', sky: 0x2a1f3a, fog: 0x3a2a4a, floor: 'parquet', wall: 'bookshelf', voidKind: 'abyss',
     ingredients: [
       { id: 'spellsugar', name: 'Spell-Sugar', method: 'chop', shape: 'crystal', c1: 0xff9ae0, c2: 0xffe0f6, c3: 0xc06ad9 },
@@ -159,4 +159,29 @@ export const T = {
   burnAt: { pan: 1.75, pot: 2.0, oven: 1.9 }, fireAt: { pan: 2.4, pot: 2.7, oven: 2.6 },
   fireSpread: 6, fireGrow: 0.25, sprayRate: 1.4,
   dirtyDelay: 9, respawn: 3, plateRespawn: 12,
+};
+
+// ---------------------------------------------------------------- character upgrades
+// Bought with coins earned from every shift; each has 5 tiers. Effects are applied by the host's
+// sim (and by each client's own movement prediction), so everyone sees the same cook.
+export const UPGRADES = [
+  { id: 'speed', name: 'Quick Feet', desc: 'Run faster', per: 0.06, unit: '% speed' },
+  { id: 'chop', name: 'Sharp Cleaver', desc: 'Chop faster', per: 0.15, unit: '% chop speed' },
+  { id: 'wash', name: 'Scrub Gloves', desc: 'Wash plates faster', per: 0.15, unit: '% wash speed' },
+  { id: 'jump', name: 'Spring Boots', desc: 'Jump higher and further', per: 0.07, unit: '% jump' },
+  { id: 'spray', name: 'Power Hose', desc: 'Put fires out faster', per: 0.2, unit: '% spray power' },
+  { id: 'recover', name: 'Quick Recovery', desc: 'Respawn sooner after a mishap', per: 0.12, unit: '% faster respawn' },
+];
+export const UPGRADE_MAX = 5;
+export const UPGRADE_COST = [80, 160, 280, 450, 700];
+/** Sanitise an upgrade map coming off the network or out of storage. */
+export function cleanUpg(u) {
+  const out = {};
+  for (const g of UPGRADES) out[g.id] = Math.max(0, Math.min(UPGRADE_MAX, (u && u[g.id]) | 0));
+  return out;
+}
+/** Multiplier from an upgrade tier (recover shortens instead of lengthening). */
+export const upgMul = (p, id) => {
+  const g = UPGRADES.find((q) => q.id === id), n = (p && p.upg && p.upg[id]) || 0;
+  return id === 'recover' ? 1 - g.per * n : 1 + g.per * n;
 };

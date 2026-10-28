@@ -204,3 +204,27 @@ export function textTex(text, { w = 256, h = 64, bg = 'rgba(0,0,0,0)', fg = '#ff
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+/** Counter fronts: two panelled cupboard doors with handles, tinted per world by the material colour. */
+export function cabinetTex(style = 'wood') {
+  return canvasTex('cab-' + style, 256, (g, s, r) => {
+    const metal = style === 'steel';
+    g.fillStyle = metal ? '#d6dbe1' : '#e9e2d6'; g.fillRect(0, 0, s, s);
+    if (!metal) for (let i = 0; i < 40; i++) { g.strokeStyle = `rgba(110,80,50,${0.05 + r() * 0.08})`; g.beginPath(); const x = r() * s; g.moveTo(x, 0); g.bezierCurveTo(x + 6, s * 0.3, x - 6, s * 0.6, x + r() * 6, s); g.stroke(); }
+    else for (let i = 0; i < 120; i++) { g.fillStyle = `rgba(255,255,255,${r() * 0.15})`; g.fillRect(0, r() * s, s, 1); }
+    // plinth shadow + top lip
+    g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillRect(0, s - 26, s, 26);
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, 0, s, 10);
+    for (const x0 of [12, s / 2 + 4]) {
+      const w = s / 2 - 16, y0 = 22, h = s - 58;
+      g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(x0, y0, w, h);
+      g.fillStyle = 'rgba(255,255,255,0.22)'; g.fillRect(x0 + 2, y0 + 2, w - 4, h - 4);
+      g.fillStyle = 'rgba(0,0,0,0.14)'; g.fillRect(x0 + 14, y0 + 14, w - 28, h - 28);
+      g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(x0 + 16, y0 + 16, w - 32, h - 32);
+    }
+    // handles
+    g.fillStyle = '#3a3a40';
+    g.fillRect(s / 2 - 22, 50, 8, 46); g.fillRect(s / 2 + 14, 50, 8, 46);
+    g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(s / 2 - 21, 52, 2, 42); g.fillRect(s / 2 + 15, 52, 2, 42);
+  });
+}
