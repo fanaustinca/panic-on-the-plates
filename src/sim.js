@@ -41,7 +41,7 @@ export function movePlayer(L, p, inp, dt, t) {
   const grounded = p.z <= 0.001;
   const sup = supportAt(L, p.x, p.y, t);
   let ex = env.push[0], ey = env.push[1];
-  if (grounded && sup.ok) { ex += sup.vx || 0; ey += sup.vy || 0; if (sup.rope) ey += env.swayV; }
+  if (grounded && sup.ok) { ex += sup.vx || 0; ey += sup.vy || 0; if (sup.rope === 'y') ex += env.swayV; else if (sup.rope) ey += env.swayV; }
   p.ex = ex; p.ey = ey;
   collideMove(L, p, (p.vx + ex) * dt, (p.vy + ey) * dt, t);
 

@@ -112,7 +112,7 @@ export class Game {
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     // the galleon gets extra room so its bow, stern and rigging frame the kitchen
-    const pad = this.world.id === 'pirate' ? [4.2, 3.2] : this.world.id === 'jungle' ? [3.6, 4.4] : this.world.id === 'factory' ? [3.4, 2.8] : [2.2, 1.8];
+    const pad = this.world.id === 'pirate' ? [4.2, 3.2] : this.world.id === 'jungle' ? [2.6, 3.0] : this.world.id === 'factory' ? [3.4, 2.8] : [2.2, 1.8];
     const W = this.L.W + pad[0], H = this.L.H + pad[1];
     const elev = THREE.MathUtils.degToRad(52);
     // distance so the kitchen fits horizontally and (foreshortened) vertically, leaving room for the HUD

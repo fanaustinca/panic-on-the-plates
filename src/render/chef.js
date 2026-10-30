@@ -13,7 +13,7 @@ const OUTFIT = {
   aviator: { body: 0x7a4a2a, pants: 0x4a3a2a, belt: 0x2a1a0e },
   explorer: { body: 0xc8b07a, pants: 0x8a7a50, belt: 0x5a3a1a },
   welder: { body: 0x3a5a7a, pants: 0x2a3a4a, apron: 0x6a4a2a },
-  wizard: { body: 0x4a2a8a, pants: 0x3a1a6a, robe: true },
+  wizard: { body: 0x6a4228, pants: 0x2a1e18, robe: true },
 };
 export const OUTFIT_IDS = Object.keys(OUTFIT);
 const SKIN = [0xf2c8a0, 0xd9a07a, 0xa86e48, 0x6e4a32];
@@ -157,12 +157,16 @@ export class Chef {
         add(cyl(20), mat(0x3a3d41), [0, 0.12, 0], [0.21, 0.04, 0.21]);
         break;
       case 'wizard': {
-        const P = mat(0x4a2a8a, { rough: 0.7 });
-        add(cyl(24), P, [0, 0.13, 0], [0.32, 0.02, 0.32]);
-        const tip = part(cone(20), P, [0, 0.38, -0.03], [0.19, 0.5, 0.19], [-0.15, 0, 0]);
-        head.add(tip);
-        for (let i = 0; i < 4; i++) add(sph(6), mat(0xffe14a, { emissive: 0xffd000, ei: 0.8 }), [Math.cos(i * 1.7) * 0.12, 0.25 + i * 0.07, Math.sin(i * 1.7) * 0.12], 0.025);
-        add(cone(12), mat(0xeeeeee, { rough: 1 }), [0, -0.2, 0.12], [0.11, 0.22, 0.06], [Math.PI + 0.25, 0, 0]);
+        // clockmaker: top hat with a brass band and a little cog, goggles on the brim
+        const P = mat(0x2a1a12, { rough: 0.6 }), brass = mat(0xd8a84a, { metal: 0.85, rough: 0.3 });
+        add(cyl(24), P, [0, 0.13, 0], [0.3, 0.02, 0.3]);
+        add(cyl(24), P, [0, 0.29, 0], [0.19, 0.3, 0.19]);
+        add(cyl(24), brass, [0, 0.19, 0], [0.195, 0.05, 0.195]);
+        add(cyl(10), brass, [0.17, 0.25, 0.08], [0.06, 0.02, 0.06], [0, 0, Math.PI / 2]);
+        for (const s of [-1, 1]) {
+          add(cyl(16), brass, [s * 0.08, 0.17, 0.17], [0.065, 0.05, 0.065], [Math.PI / 2 - 0.3, 0, 0]);
+          add(cyl(16), mat(0x7ad8ff, { emissive: 0x2a6a8a, ei: 0.6, rough: 0.1 }), [s * 0.08, 0.17, 0.195], [0.048, 0.01, 0.048], [Math.PI / 2 - 0.3, 0, 0]);
+        }
         break;
       }
     }

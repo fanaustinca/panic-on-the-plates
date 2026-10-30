@@ -3,9 +3,10 @@
 import * as THREE from 'three';
 import { T, INGREDIENTS, WORLDS } from '../config.js';
 import { tileAt } from '../levels.js';
-import { floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
+import { floeAt, floeMoving, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
 import { floorTex, wallTex, topTex, stripeTex, beltTex, glowTex, textTex, shade, cabinetTex } from './textures.js';
 import { Particles } from './particles.js';
+import { makeLava } from './lava.js';
 import { WATERLINE } from './ship.js';
 import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode, makeItem, itemKey, makeIngredient } from './items.js';
 import { STYLE, buildBackdrop } from './env.js';
@@ -64,7 +65,7 @@ export class Kitchen {
     if (this.world.id === 'jungle') this.makePods();
     const floorM = new THREE.MeshStandardMaterial({ map: floorTex(S.floor), roughness: S.floor === 'ice' ? 0.15 : 0.7, metalness: S.floor === 'ice' ? 0.1 : 0.05 });
     const wallM = new THREE.MeshStandardMaterial({ map: wallTex(S.wall), roughness: 0.8 });
-    const topM = new THREE.MeshStandardMaterial({ map: topTex(S.top), roughness: S.top === 'ice' || S.top === 'marble' ? 0.25 : S.top === 'stone' ? 0.35 : 0.55, metalness: S.top === 'steel' ? 0.6 : 0 });
+    const topM = new THREE.MeshStandardMaterial({ map: topTex(S.top), roughness: S.top === 'ice' || S.top === 'marble' ? 0.25 : S.top === 'stone' || S.top === 'brass' ? 0.35 : 0.55, metalness: S.top === 'steel' ? 0.6 : S.top === 'brass' ? 0.55 : 0 });
     const sideM = new THREE.MeshStandardMaterial({ map: cabinetTex(S.top === 'steel' || S.top === 'panel' ? 'steel' : 'wood'), color: S.side, roughness: 0.55, metalness: S.top === 'steel' || S.top === 'panel' ? 0.35 : 0 });
     const trimM = mat(S.trim, { rough: 0.4, metal: 0.3, emissive: this.world.id === 'volcano' || this.world.id === 'space' ? S.trim : 0, ei: 0.5 });
     const floors = L.tiles.filter((t) => t.k === 'floor');
@@ -72,8 +73,8 @@ export class Kitchen {
     const walls = L.tiles.filter((t) => t.k === 'wall');
     // one instanced mesh per parent (the root, or each swaying treehouse pod)
     const inst = (geom, material, list, fn) => {
-      const by = new Map([[this.home(list.length ? list[0].x : -1), []]]);
-      for (const t of list) { const h = this.home(t.x); if (!by.has(h)) by.set(h, []); by.get(h).push(t); }
+      const by = new Map([[list.length ? this.home(list[0].x, list[0].y) : this.root, []]]);
+      for (const t of list) { const h = this.home(t.x, t.y); if (!by.has(h)) by.set(h, []); by.get(h).push(t); }
       let first = null;
       for (const [h, sub] of by) {
         const m = new THREE.InstancedMesh(geom, material, Math.max(1, sub.length));
@@ -109,6 +110,14 @@ export class Kitchen {
     this.backdrop = buildBackdrop(this.world.id, L.W, L.H, this.world.sky, L);
     this.root.add(this.backdrop.group);
     if (this.pods) this.buildTreehouse();
+    // lava pits: the magma shows through the hole in the island
+    this.pitFx = [];
+    if (this.world.id === 'volcano') for (const t of L.tiles.filter((q) => q.pit)) {
+      const lv = makeLava({ size: 1.02, seg: 4, y: -0.7 });
+      lv.mesh.position.x = this.cx(t.x); lv.mesh.position.z = this.cz(t.y);
+      this.root.add(lv.mesh);
+      this.pitFx.push(lv);
+    }
     this.worldGroup = this.backdrop.world; // added to the scene by the game; does not roll
     // target highlight
     this.highlight = new THREE.Mesh(new THREE.BoxGeometry(1.04, 0.04, 1.04), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }));
@@ -122,7 +131,7 @@ export class Kitchen {
     tex.rotation = t.push > 0 ? 0 : Math.PI;
     tex.center.set(0.5, 0.5);
     const m = part(new THREE.PlaneGeometry(0.98, 0.98), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }), [this.cx(t.x), 0.006, this.cz(t.y)], 1, [-Math.PI / 2, 0, 0]);
-    this.home(t.x).add(m);
+    this.home(t.x, t.y).add(m);
     this.fx.push({ belt: tex, dir: 1 });
   }
 
@@ -131,7 +140,7 @@ export class Kitchen {
     g.position.set(this.cx(t.x), CH, this.cz(t.y));
     const [dx, dy] = this.faceDir(t);
     g.rotation.y = Math.atan2(dx, dy);
-    this.home(t.x).add(g);
+    this.home(t.x, t.y).add(g);
     const P = { group: g };
     const add = (...a) => { const m = part(...a); g.add(m); return m; };
     const steel = mat(0xc8d0d8, { metal: 0.8, rough: 0.3 }), dark = mat(0x26282c, { metal: 0.5, rough: 0.5 });
@@ -295,31 +304,122 @@ export class Kitchen {
   buildBridges() {
     this.bridgeMeshes = [];
     const id = this.world.id;
+    const look = { pirate: [0x8a5a30, 0x5a3a1a], volcano: [0x3a3236, 0xff6a20], space: [0x8b96a6, 0x2ad0ff], clouds: [0xf6f2ea, 0xd8b050], factory: [0x6a727c, 0xffc020], library: [0x8a5a2a, 0xd8a84a], glacier: [0xcfefff, 0x5a98bc] }[id] || [0x888888, 0x444444];
+    const deckM = mat(look[0], { rough: 0.6 }), railM = mat(look[1], { rough: 0.4, metal: 0.4 });
     for (const b of this.L.bridges) {
       if (b.rope && this.pods) { this.bridgeMeshes.push({ b, g: this.buildRopeBridge(b) }); continue; }
       const g = new THREE.Group();
       for (const [x, y] of b.tiles) {
+        // every piece is modelled running along +x, then turned for bridges that run front to back
         const tg = new THREE.Group();
         tg.position.set(this.cx(x), 0, this.cz(y));
-        if (b.rope) {
-          for (let i = 0; i < 5; i++) tg.add(part(box(), mat(0x9a6a3a, { rough: 0.9 }), [-0.4 + i * 0.2, -0.03, 0], [0.17, 0.05, 0.9]));
-          for (const s of [-1, 1]) tg.add(part(cyl(6), mat(0xd8c08a), [0, 0.45, s * 0.46], [0.02, 1, 0.02], [0, 0, Math.PI / 2]));
-        } else {
-          const look = { pirate: [0x8a5a30, 0x5a3a1a], volcano: [0x3a3236, 0xff6a20], space: [0x8b96a6, 0x2ad0ff], clouds: [0xf6f2ea, 0xd8b050], factory: [0x6a727c, 0xffc020], library: [0x6a3e26, 0xd8a84a], glacier: [0xcfefff, 0x5a98bc] }[id] || [0x888888, 0x444444];
-          tg.add(part(box(), mat(look[0], { rough: 0.6 }), [0, -0.08, 0], [1, 0.16, 0.9]));
-          for (const s of [-1, 1]) tg.add(part(box(), mat(look[1], { rough: 0.4, metal: 0.4 }), [0, 0.06, s * 0.47], [1, 0.12, 0.06]));
+        if (b.dir === 'y') tg.rotation.y = Math.PI / 2;
+        const add = (...a) => { const m = part(...a); tg.add(m); return m; };
+        switch (id) {
+          case 'space': this.tubeSection(tg); break;
+          case 'glacier':
+            add(box(), mat(0xdff4ff, { rough: 0.25, metal: 0.05, opacity: 0.92 }), [0, -0.12, 0], [1, 0.24, 0.92]);
+            add(box(), mat(0xffffff, { rough: 0.9 }), [0, 0.005, 0], [1, 0.03, 0.8]);
+            for (let k = 0; k < 4; k++) add(cone(6), mat(0xcdeeff, { rough: 0.2, opacity: 0.85 }), [-0.35 + k * 0.23, -0.34, (k % 2 ? 1 : -1) * 0.3], [0.05, 0.25 + (k % 3) * 0.08, 0.05], [Math.PI, 0, 0]);
+            for (const sz of [-1, 1]) add(box(), mat(0x9ad4f0, { rough: 0.2, opacity: 0.8 }), [0, 0.18, sz * 0.46], [1, 0.36, 0.08]);
+            break;
+          case 'volcano': {
+            // basalt stepping stones with lava glowing in the seams
+            add(box(), mat(0x2a2224, { rough: 0.9 }), [0, -0.3, 0], [0.96, 0.55, 0.9]);
+            const stone = mat(0x3a3236, { rough: 0.85, flat: true });
+            for (const [sx, sz] of [[-0.24, -0.22], [0.24, -0.2], [-0.22, 0.22], [0.25, 0.23]]) add(cyl(6), stone, [sx, -0.04, sz], [0.25, 0.1, 0.24], [0, sx * 3, 0]);
+            add(box(), mat(0xff5a10, { emissive: 0xff3a00, ei: 1.4 }), [0, -0.08, 0], [0.9, 0.03, 0.86]);
+            break;
+          }
+          case 'factory':
+            add(box(), mat(0x4a525c, { metal: 0.7, rough: 0.4 }), [0, -0.05, 0], [1, 0.06, 0.9]);
+            for (let k = 0; k < 6; k++) add(box(), mat(0x2a2e34, { metal: 0.6 }), [0, -0.015, -0.375 + k * 0.15], [0.98, 0.012, 0.04]);
+            for (const sz of [-1, 1]) {
+              add(box(), railM, [0, 0.8, sz * 0.45], [1, 0.05, 0.05]);
+              add(box(), railM, [0, 0.4, sz * 0.45], [1, 0.04, 0.04]);
+              add(box(), railM, [0, 0.4, sz * 0.45], [0.05, 0.8, 0.05]);
+            }
+            add(box(), mat(0x3a4048, { metal: 0.6 }), [0, -0.22, 0], [1, 0.3, 0.12]);
+            break;
+          case 'clouds': {
+            add(box(), mat(0xfffaf0, { rough: 0.5 }), [0, -0.06, 0], [1, 0.12, 0.86]);
+            for (const sz of [-1, 1]) add(box(), railM, [0, 0.07, sz * 0.45], [1, 0.08, 0.05]);
+            const puffM = mat(0xffffff, { rough: 1 });
+            for (let k = 0; k < 3; k++) add(sph(12), puffM, [-0.33 + k * 0.33, -0.28, (k - 1) * 0.15], [0.42, 0.26, 0.5]);
+            break;
+          }
+          case 'library': {
+            // brass span with gear teeth along its edges
+            add(box(), mat(0x6a4426, { rough: 0.6 }), [0, -0.07, 0], [1, 0.14, 0.86]);
+            const brass = mat(0xd8a84a, { metal: 0.85, rough: 0.3 });
+            for (const sz of [-1, 1]) {
+              add(box(), brass, [0, 0.02, sz * 0.45], [1, 0.1, 0.06]);
+              for (let k = 0; k < 3; k++) add(box(), brass, [-0.33 + k * 0.33, 0.02, sz * 0.5], [0.12, 0.08, 0.06]);
+            }
+            break;
+          }
+          default:
+            add(box(), deckM, [0, -0.08, 0], [1, 0.16, 0.9]);
+            for (const sz of [-1, 1]) add(box(), railM, [0, 0.06, sz * 0.47], [1, 0.12, 0.06]);
         }
         g.add(tg);
       }
-      if (b.rope) for (const [x, y] of [b.tiles[0], b.tiles[b.tiles.length - 1]]) for (const s of [-1, 1]) g.add(part(cyl(8), mat(0x6a4a2a), [this.cx(x), 0.45, this.cz(y) + s * 0.46], [0.05, 0.9, 0.05]));
       this.root.add(g);
       this.bridgeMeshes.push({ b, g });
     }
   }
 
+  /** One tile of a space-station tube corridor: hull shell open at the top, ribs arching over. */
+  tubeSection(tg) {
+    const hull = this.tubeM || (this.tubeM = {
+      shell: new THREE.MeshStandardMaterial({ color: 0xd8dee8, metalness: 0.45, roughness: 0.45, side: THREE.DoubleSide }),
+      rib: mat(0x6a7484, { metal: 0.7, rough: 0.35 }),
+      glow: new THREE.MeshStandardMaterial({ color: 0x2ad0ff, emissive: 0x2ad0ff, emissiveIntensity: 1.6 }),
+      grate: new THREE.MeshStandardMaterial({ map: floorTex('metalgrid'), roughness: 0.5, metalness: 0.5 }),
+    });
+    const R = 0.66, cy = 0.12;
+    // shell: 270 degrees of cylinder around the walkway, the top quarter cut away so the camera sees in
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 1, 28, 1, true, Math.PI * 0.25 + Math.PI / 2, Math.PI * 1.5), hull.shell);
+    shell.rotation.z = Math.PI / 2; shell.position.y = cy; shell.receiveShadow = true;
+    tg.add(shell);
+    tg.add(part(box(), hull.grate, [0, -0.01, 0], [1, 0.03, 0.84]));
+    for (const sx of [-0.5, 0]) {
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(R + 0.03, 0.045, 6, 28), hull.rib);
+      rib.rotation.y = Math.PI / 2; rib.position.set(sx, cy, 0);
+      rib.castShadow = true;
+      tg.add(rib);
+    }
+    // a strip light along each side
+    for (const sz of [-1, 1]) tg.add(part(box(), hull.glow, [0, cy + 0.32, sz * (R - 0.08)], [0.9, 0.03, 0.03]));
+  }
+
   buildFloes() {
     this.floeMeshes = this.L.floes.map((f) => {
       const g = new THREE.Group();
+      if (f.cart) {
+        // factory shuttle: a cart riding a conveyor belt across the gap
+        g.add(part(box(), mat(0x4a525c, { metal: 0.7, rough: 0.35 }), [f.w / 2, -0.07, f.h / 2], [f.w - 0.06, 0.14, f.h - 0.06]));
+        g.add(part(new THREE.PlaneGeometry(f.w - 0.12, f.h - 0.12), new THREE.MeshStandardMaterial({ map: floorTex('steelplate'), roughness: 0.5, metalness: 0.5 }), [f.w / 2, 0.004, f.h / 2], 1, [-Math.PI / 2, 0, 0]));
+        for (const sz of [0.05, f.h - 0.05]) g.add(part(new THREE.PlaneGeometry(f.w - 0.06, 0.1), new THREE.MeshBasicMaterial({ map: stripeTex() }), [f.w / 2, 0.006, sz], 1, [-Math.PI / 2, 0, 0]));
+        const lights = [];
+        for (const [sx, sz] of [[0.08, 0.08], [f.w - 0.08, f.h - 0.08]]) {
+          const l = part(sph(10), new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8000, emissiveIntensity: 0.1 }), [sx, 0.06, sz], 0.05);
+          g.add(l); lights.push(l);
+        }
+        g.add(part(box(), mat(0x2a2e34, { metal: 0.6 }), [f.w / 2, -0.24, f.h / 2], [f.w * 0.7, 0.2, f.h * 0.8]));
+        this.root.add(g);
+        // the conveyor it rides on: a belt the whole width of the gap, rollers and side frames
+        const len = f.x1 - f.x0 + f.w, x0 = this.wx(f.x0), zc = this.wz(f.y) + f.h / 2;
+        const tex = beltTex().clone(); tex.needsUpdate = true; tex.repeat.set(len, 1);
+        const belt = part(new THREE.PlaneGeometry(len + 0.3, f.h - 0.2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }), [x0 + len / 2, -0.35, zc], 1, [-Math.PI / 2, 0, 0]);
+        this.root.add(belt);
+        for (const sz of [-1, 1]) {
+          this.root.add(part(box(), mat(0xffb81a, { rough: 0.5, metal: 0.2 }), [x0 + len / 2, -0.36, zc + sz * (f.h / 2 - 0.05)], [len + 0.4, 0.18, 0.08]));
+          for (let k = 0; k <= len; k++) this.root.add(part(cyl(10), mat(0x8a929a, { metal: 0.8, rough: 0.3 }), [x0 + k, -0.42, zc], [0.08, f.h - 0.25, 0.08], [Math.PI / 2, 0, 0]));
+        }
+        for (const sx of [x0 + 0.3, x0 + len - 0.3]) this.root.add(part(box(), mat(0x3a4048, { metal: 0.6 }), [sx, -2.4, zc], [0.2, 4, 0.2]));
+        return { f, g, lights, tex };
+      }
       const top = part(box(), new THREE.MeshStandardMaterial({ map: floorTex('ice'), roughness: 0.15 }), [f.w / 2, -0.12, f.h / 2], [f.w - 0.06, 0.24, f.h - 0.06]);
       g.add(top);
       g.add(part(dode(), mat(0xbfe6f6, { rough: 0.3, flat: true }), [f.w / 2, -0.55, f.h / 2], [f.w * 0.55, 0.45, f.h * 0.55]));
@@ -340,7 +440,7 @@ export class Kitchen {
       const ends = stripeTex();
       for (const sx of [-1, 1]) tg.add(part(new THREE.PlaneGeometry(0.16, 0.7), new THREE.MeshBasicMaterial({ map: ends }), [sx * (len / 2 - 0.08), 0.012, 0], 1, [-Math.PI / 2, 0, 0]));
       tg.children.forEach((c) => { c.castShadow = false; });
-      this.home(m.x0).add(tg);
+      this.home(m.x0, m.y).add(tg);
       // the counter itself on a wheeled bogie
       const g = new THREE.Group();
       g.add(part(box(), sideM, [0, CH / 2 + 0.02, 0], [0.94, CH - 0.12, 0.94]));
@@ -353,7 +453,7 @@ export class Kitchen {
         const l = part(sph(10), new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8000, emissiveIntensity: 0.1 }), [sx * 0.42, CH + 0.05, 0.42], 0.05);
         g.add(l); lights.push(l);
       }
-      this.home(m.x0).add(g);
+      this.home(m.x0, m.y).add(g);
       return { m, g, lights, hold: null, key: '' };
     });
   }
@@ -368,7 +468,7 @@ export class Kitchen {
       const warn = part(new THREE.PlaneGeometry(0.96, 0.96), new THREE.MeshBasicMaterial({ map: stripeTex(), transparent: true, opacity: 0.8, depthWrite: false }), [0, 0.012, 0], 1, [-Math.PI / 2, 0, 0]);
       warn.castShadow = false;
       const wg = new THREE.Group(); wg.add(warn); wg.position.copy(g.position);
-      this.home(s.x).add(g, wg);
+      this.home(s.x, s.y).add(g, wg);
       return { s, g, warn: wg };
     });
   }
@@ -495,6 +595,7 @@ export class Kitchen {
     const L = this.L;
     const env = envAt(L, Math.max(0, t));
     this.backdrop.update(rt);
+    for (const lv of this.pitFx) lv.update(rt);
     const play = Math.max(0, t);
     this.updateRoll(env, rt);
     if (this.pods) { this.updatePods(env, rt, dt); this.updateTreehouse(rt); }
@@ -535,7 +636,7 @@ export class Kitchen {
           const mesh = makeItem(it);
           e = { key, mesh };
           this.itemMeshes.set(i, e);
-          this.home(tl.x).add(mesh);
+          this.home(tl.x, tl.y).add(mesh);
         }
         const base = tl.st === 'oven' ? 1.15 : tl.st === 'trash' ? 0.9 : CH + (ITEM_Y[tl.st] || 0);
         const bt = tl.belt != null ? Math.min(1, s.bt || 0) : 0;
@@ -546,7 +647,7 @@ export class Kitchen {
         const sq = this.squash.get(i) || 0;
         if (sq > 0) this.squash.set(i, Math.max(0, sq - dt * 7));
         if (tl.st === 'board' && it.kind === 'ing' && it.s === 'raw' && it.p > 0) {
-          if (!e.pile) { e.pile = makeItem({ kind: 'ing', ing: it.ing, s: 'chopped' }); this.home(tl.x).add(e.pile); }
+          if (!e.pile) { e.pile = makeItem({ kind: 'ing', ing: it.ing, s: 'chopped' }); this.home(tl.x, tl.y).add(e.pile); }
           const k = Math.min(1, it.p);
           e.mesh.scale.set(1 - k * 0.45, (1 - k * 0.5) * (1 - sq * 0.35), 1 - k * 0.45);
           e.mesh.position.x -= 0.08;
@@ -602,8 +703,15 @@ export class Kitchen {
       else if (f.belt) f.belt.offset.x -= dt * 1.7;
     }
     // floes, bridges, shifting walls
-    for (const { f, g } of this.floeMeshes) {
+    for (const { f, g, lights, tex } of this.floeMeshes) {
       const r = floeAt(f, play);
+      if (f.cart) {
+        g.position.set(this.wx(r.x), 0, this.wz(r.y));
+        tex.offset.x -= r.vx * dt;
+        const blink = floeMoving(f, play) && Math.sin(rt * 12) > 0;
+        lights.forEach((l) => { l.material.emissiveIntensity = blink ? 3 : 0.2; });
+        continue;
+      }
       g.position.set(this.wx(r.x), Math.sin(rt * 1.4 + f.phase * 6) * 0.03, this.wz(r.y));
       g.rotation.z = Math.sin(rt * 0.9 + f.phase * 4) * 0.02;
     }
@@ -630,7 +738,7 @@ export class Kitchen {
       if (e.key !== key) {
         if (e.hold) e.hold.removeFromParent();
         e.hold = it ? makeItem(it) : null;
-        if (e.hold) this.home(e.m.x0).add(e.hold);
+        if (e.hold) this.home(e.m.x0, e.m.y).add(e.hold);
         e.key = key;
       }
       if (e.hold) e.hold.position.set(e.g.position.x, CH, e.g.position.z);
@@ -1002,7 +1110,7 @@ export class Kitchen {
       const mesh = makeItem({ kind: 'plate', n, dirty, c: [] });
       e = { key: k, mesh };
       this.itemMeshes.set(key, e);
-      this.home(tl.x).add(mesh);
+      this.home(tl.x, tl.y).add(mesh);
     }
     const [dx, dy] = this.faceDir(tl);
     // sideways offset (clean rack sits to the right of the basin)
@@ -1026,7 +1134,7 @@ export class Kitchen {
       const icon = ui(new THREE.CircleGeometry(0.17, 28), 0xffffff, 24, textTex('✔', { w: 64, h: 64, bg: '#2fbf5a', font: '900 44px sans-serif' }));
       const warnI = ui(new THREE.CircleGeometry(0.19, 28), 0xffffff, 24, textTex('!', { w: 64, h: 64, bg: '#ff3a3a', font: '900 48px Fredoka, sans-serif' }));
       g.add(frame, bg, fill, shine, icon, warnI);
-      this.home(tl.x).add(g);
+      this.home(tl.x, tl.y).add(g);
       b = { g, frame, bg, fill, shine, icon, warnI };
       this.bars.set(i, b);
     }
@@ -1063,7 +1171,7 @@ export class Kitchen {
       g.add(glow);
       const smoke = [];
       for (let k = 0; k < 4; k++) { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0x333333, transparent: true, opacity: 0.4, depthWrite: false })); g.add(s); smoke.push(s); }
-      this.home(tl.x).add(g);
+      this.home(tl.x, tl.y).add(g);
       f = { g, flames, smoke };
       this.fires.set(i, f);
     }
@@ -1183,7 +1291,7 @@ export class Kitchen {
   setHighlight(target) {
     if (!target) { this.highlight.visible = false; return; }
     this.highlight.visible = true;
-    const hp = target[2] != null && this.moverMeshes[target[2]] ? this.home(this.moverMeshes[target[2]].m.x0) : this.home(target[0]);
+    const hp = target[2] != null && this.moverMeshes[target[2]] ? this.home(this.moverMeshes[target[2]].m.x0, this.moverMeshes[target[2]].m.y) : this.home(target[0], target[1]);
     if (this.highlight.parent !== hp) hp.add(this.highlight);
     if (target[2] != null && this.moverMeshes[target[2]]) { const p = this.moverMeshes[target[2]].g.position; this.highlight.position.set(p.x, CH + 0.02, p.z); return; }
     const tl = tileAt(this.L, target[0], target[1]);

@@ -2,11 +2,12 @@
 // and checked for reachability (see validate). Pure data, no Three.js, so node tests can import it.
 import { WORLDS, LEVEL_RECIPES, worldRecipes, T } from './config.js';
 import { rng, hash } from './rng.js';
+import { planFor, layOut } from './layouts.js';
 
 export const LEVELS_PER_WORLD = 10;
 /** Index of each world's multiplayer kitchen (bigger, more workstations); key `${wi}-10`. */
 export const MP_LEVEL = 10;
-const MP_TITLES = ['Fleet Galley', 'Ice Station Banquet', 'Magma Mess Hall', 'Orbital Canteen', 'Sky Palace Feast', 'Treetop Village', 'Mega Plant', 'Grand Archive'];
+const MP_TITLES = ['Fleet Galley', 'Ice Station Banquet', 'Magma Mess Hall', 'Orbital Canteen', 'Sky Palace Feast', 'Treetop Village', 'Mega Plant', 'Grand Clocktower'];
 
 const TITLES = [
   ['Galley Ho!', 'Plank Prep', 'Two Decks', 'Brig Brunch', 'Cannon Kitchen', 'Keelhaul Kitchen', 'Mutiny Mise', "Crow's Nest Cuisine", 'Kraken Shallows', "Captain's Table"],
@@ -16,7 +17,7 @@ const TITLES = [
   ['Cloud Nine Café', 'Tailwind Table', 'Gust Front', 'Sky Bridge Bistro', 'Thunder Prep', 'Jet Stream Kitchen', 'Cumulus Cuisine', 'Storm Cell', 'Eye of the Storm', 'Stratosphere Supper'],
   ['Treetop Takeout', 'Monkey Business', 'Rope Bridge Run', 'Canopy Kitchen', 'Vine Dining', 'Banana Heist', 'Swinging Skillets', 'Lost Temple Lunch', 'Howler Hollow', 'King of the Canopy'],
   ['Clock In', 'Belt Drive', 'Assembly Line', 'Lever Lunch', 'Hot Rivets', 'Night Shift', 'Overtime', 'Quality Control', 'Full Throttle', 'Mainframe Feast'],
-  ['Quiet Please', 'Overdue Orders', 'Tick Tock Toast', 'Grimoire Grill', 'The Cuckoo Hour', 'Hourglass Hall', 'Midnight Index', 'Pendulum Pantry', 'Time Loop Lunch', 'Clockwork Finale'],
+  ['First Tick', 'Wind-Up', 'Tick Tock Toast', 'Gear Grill', 'The Cuckoo Hour', 'Hourglass Hall', 'Midnight Chime', 'Pendulum Pantry', 'Time Loop Lunch', 'Clockwork Finale'],
 ];
 export const levelTitle = (wi, li) => (li === MP_LEVEL ? MP_TITLES[wi] : TITLES[wi][li]);
 export const levelKey = (wi, li) => `${wi}-${li}`;
@@ -46,96 +47,154 @@ function tryBuild(wi, liIn, seed) {
   // the multiplayer kitchen plays like a mid-campaign level, on a much bigger floor
   const mp = liIn === MP_LEVEL;
   const li = mp ? 5 : liIn;
-  // jungle: the kitchen is split over separate treehouse pods, so it gets extra width for the gaps
-  const podZ = wi === 5 ? (mp || li >= 5 ? 3 : 2) : 0;
-  const W = mp ? 19 : [11, 12, 12, 13, 13, 14, 14, 15, 15, 16][li] + (podZ === 3 ? 3 : podZ ? 1 : 0);
-  const H = mp ? 11 : li < 4 ? 9 : 10;
+  const plan = planFor(wi, li, mp, r);
+  const lay = layOut(plan, r);
+  const { W, H } = lay;
   const tiles = [];
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tiles.push({ k: 'floor', x, y });
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) tiles.push({ k: 'void', x, y });
   const at = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? tiles[y * W + x] : null);
-  const set = (x, y, k, extra) => { const t = at(x, y); if (t) { for (const key of Object.keys(t)) if (key !== 'x' && key !== 'y') delete t[key]; t.k = k; Object.assign(t, extra); } };
+  const set = (x, y, k, extra) => { const t = at(x, y); if (t) { for (const key of Object.keys(t)) if (key !== 'x' && key !== 'y' && key !== 'zi') delete t[key]; t.k = k; Object.assign(t, extra); } };
+  const zi = (x, y) => { const t = at(x, y); return t && t.zi != null ? t.zi : -1; };
 
-  // ---- zones (islands separated by void gaps) ----
-  let Z = mp ? 2 : li < 2 ? 1 : li < 4 ? (r.chance(0.5) ? 1 : 2) : li < 8 ? 2 : (W >= 15 ? 3 : 2);
-  if (wi === 1 && li >= 2) Z = Math.max(Z, 2); // glacier: drifting floes need water channels
-  if (podZ) Z = podZ; // jungle: every level is treehouse pods joined by rope bridges
-  const gapW = wi === 1 || podZ ? 2 : (li >= 6 && r.chance(0.5) ? 2 : 1);
-  const zones = [];
-  const usable = W - (Z - 1) * gapW;
-  let cx = 0;
-  for (let z = 0; z < Z; z++) {
-    const w = z < Z - 1 ? Math.floor(usable / Z) + (z === 0 && usable % Z ? 1 : 0) : W - cx;
-    zones.push({ x0: cx, x1: cx + w - 1 });
-    cx += w + gapW;
-  }
-  const gaps = zones.slice(0, -1).map((z) => ({ x0: z.x1 + 1, x1: z.x1 + gapW }));
-
-  for (const g of gaps) for (let y = 0; y < H; y++) for (let x = g.x0; x <= g.x1; x++) set(x, y, 'void');
+  // ---- zones: fill each shape, border it with counters, a back wall where nothing stands behind ----
+  const zones = lay.zones.map((z, i) => ({ x0: z.x0, y0: z.y0, x1: z.x1, y1: z.y1, i }));
+  lay.zones.forEach((z, i) => {
+    for (let y = z.y0; y <= z.y1; y++) for (let x = z.x0; x <= z.x1; x++) if (!z.cut.has(`${x},${y}`)) { const t = at(x, y); t.k = 'floor'; t.zi = i; }
+  });
   for (const z of zones) {
-    for (let x = z.x0; x <= z.x1; x++) { set(x, 0, 'wall'); set(x, 1, 'counter'); set(x, H - 1, 'counter'); }
-    for (let y = 1; y < H; y++) { set(z.x0, y, 'counter'); set(z.x1, y, 'counter'); }
-  }
-
-  // ---- connections across gaps ----
-  const bridges = [], floes = [];
-  const kind = wi === 1 ? 'floe' : wi === 5 ? 'rope' : 'bridge';
-  for (const g of gaps) {
-    const left = zones.find((z) => z.x1 === g.x0 - 1), right = zones.find((z) => z.x0 === g.x1 + 1);
-    if (kind === 'floe') {
-      // a 2x2 ice floe drifts up and down the channel; the banks are open along its path
-      const y0 = 2, y1 = H - 4;
-      for (let y = y0; y <= y1 + 1; y++) { set(left.x1, y, 'floor'); set(right.x0, y, 'floor'); }
-      floes.push({ x: g.x0, w: gapW, h: 2, y0, y1, period: 9 + r() * 4, phase: r() });
-      // a second floe on long channels in later levels
-      if (li >= 7) floes.push({ x: g.x0, w: gapW, h: 2, y0, y1, period: 11 + r() * 4, phase: 0.5 + r() * 0.3 });
-      continue;
+    // back wall only when no other zone stands behind this one (it would hide it from the camera)
+    z.wall = !zones.some((o) => o !== z && o.y1 < z.y0 && o.x1 >= z.x0 && o.x0 <= z.x1);
+    for (let y = z.y0; y <= z.y1; y++) for (let x = z.x0; x <= z.x1; x++) {
+      if (zi(x, y) !== z.i) continue;
+      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]].some(([dx, dy]) => zi(x + dx, y + dy) !== z.i);
+      if (z.wall && y === z.y0) set(x, y, 'wall');
+      else if (edge || (z.wall && y === z.y0 + 1)) set(x, y, 'counter');
     }
-    const nb = li >= 5 ? 2 : r.chance(0.35) ? 2 : 1;
-    const rows = r.shuffle([2, 3, 4, 5, 6, H - 3].filter((y) => y >= 2 && y <= H - 3)).slice(0, nb).sort((a, b) => a - b);
-    if (rows.length === 2 && rows[1] - rows[0] < 2) rows.pop();
-    rows.forEach((y, i) => {
-      set(left.x1, y, 'floor'); set(right.x0, y, 'floor');
-      const tilesB = [];
-      for (let x = g.x0; x <= g.x1; x++) { set(x, y, 'bridge', { rope: kind === 'rope' }); tilesB.push([x, y]); }
-      bridges.push({ tiles: tilesB, rope: kind === 'rope', shifting: li >= 6 && rows.length > 1 && i === 1, row: y });
-    });
+    z.yi0 = z.y0 + (z.wall ? 2 : 1); z.yi1 = z.y1 - 1; // interior rows
+  }
+  const interiorOf = (z, x, y) => zi(x, y) === z.i && at(x, y).k === 'floor';
+
+  // ---- connections across gaps: bridges (rope, ice, tube...), drifting floes or conveyor shuttles ----
+  const bridges = [], floes = [], gaps = [];
+  const kind = wi === 5 ? 'rope' : 'bridge';
+  for (const ln of lay.links) {
+    const A = zones[ln.a], B = zones[ln.b];
+    if (ln.dir === 'x') {
+      // A on the left, B on the right: rows where both edges are counters backed by floor
+      const ex = (z, y, side) => { for (let x = side > 0 ? z.x1 : z.x0; side > 0 ? x >= z.x0 : x <= z.x1; x -= side) if (zi(x, y) === z.i) return x; return null; };
+      const gx0 = A.x1 + 1, gx1 = B.x0 - 1;
+      const rows = [];
+      for (let y = Math.max(A.yi0, B.yi0); y <= Math.min(A.yi1, B.yi1); y++) {
+        const ax = ex(A, y, 1), bx = ex(B, y, -1);
+        if (ax === A.x1 && bx === B.x0 && interiorOf(A, ax - 1, y) && interiorOf(B, bx + 1, y)) rows.push(y);
+      }
+      if (!rows.length) return null;
+      gaps.push({ dir: 'x', a: ln.a, b: ln.b, x0: gx0, x1: gx1, y0: rows[0], y1: rows[rows.length - 1] });
+      const gw = gx1 - gx0 + 1;
+      if (wi === 6 && gw >= 2 && rows.length >= 2) {
+        // factory: a cart rides a conveyor back and forth across the gap
+        const y = r.pick(rows.slice(0, -1).filter((q) => rows.includes(q + 1))) ?? null;
+        if (y == null) return null;
+        for (const yy of [y, y + 1]) { set(A.x1, yy, 'floor'); set(B.x0, yy, 'floor'); }
+        floes.push({ axis: 'x', x0: gx0, x1: gx1, y, w: 1, h: 2, period: 8 + gw * 0.8, phase: r(), dwell: 0.32, cart: true });
+        continue;
+      }
+      if (wi === 1 && li >= 3 && rows.length >= 3 && r.chance(0.7)) {
+        // glacier: a floe drifts up and down the channel; the banks are open along its path
+        const y0 = rows[0], y1 = rows[rows.length - 1] - 1;
+        if (rows.length === y1 - y0 + 2) {
+          for (let y = y0; y <= y1 + 1; y++) { set(A.x1, y, 'floor'); set(B.x0, y, 'floor'); }
+          floes.push({ x: gx0, w: gw, h: 2, y0, y1, period: 9 + r() * 4, phase: r() });
+          continue;
+        }
+      }
+      const nb = rows.length >= 4 && (li >= 5 || r.chance(0.35)) ? 2 : 1;
+      const pick = r.shuffle(rows.slice()).slice(0, nb).sort((a, b) => a - b);
+      if (pick.length === 2 && pick[1] - pick[0] < 2) pick.pop();
+      pick.forEach((y, i) => {
+        set(A.x1, y, 'floor'); set(B.x0, y, 'floor');
+        const tb = [];
+        for (let x = gx0; x <= gx1; x++) { set(x, y, 'bridge', { rope: kind === 'rope', dir: 'x' }); tb.push([x, y]); }
+        bridges.push({ tiles: tb, rope: kind === 'rope', dir: 'x', shifting: (li >= 6 && pick.length > 1 && i === 1) || (wi === 2 && li >= 4 && i === 0 && pick.length > 1), row: y, a: ln.a, b: ln.b });
+      });
+    } else {
+      // A behind, B in front: columns where both edges are counters backed by floor
+      const gy0 = A.y1 + 1, gy1 = B.y0 - 1;
+      const cols = [];
+      for (let x = Math.max(A.x0 + 1, B.x0 + 1); x <= Math.min(A.x1 - 1, B.x1 - 1); x++) {
+        if (zi(x, A.y1) === A.i && zi(x, B.y0) === B.i && interiorOf(A, x, A.y1 - 1) && interiorOf(B, x, B.y0 + 1)) cols.push(x);
+      }
+      if (!cols.length) return null;
+      gaps.push({ dir: 'y', a: ln.a, b: ln.b, y0: gy0, y1: gy1, x0: cols[0], x1: cols[cols.length - 1] });
+      const nb = cols.length >= 4 && li >= 5 && r.chance(0.5) ? 2 : 1;
+      const pick = r.shuffle(cols.slice()).slice(0, nb).sort((a, b) => a - b);
+      if (pick.length === 2 && pick[1] - pick[0] < 2) pick.pop();
+      pick.forEach((x) => {
+        set(x, A.y1, 'floor'); set(x, B.y0, 'floor');
+        const tb = [];
+        for (let y = gy0; y <= gy1; y++) { set(x, y, 'bridge', { rope: kind === 'rope', dir: 'y' }); tb.push([x, y]); }
+        bridges.push({ tiles: tb, rope: kind === 'rope', dir: 'y', shifting: wi === 2 && li >= 7 && pick.length > 1 && x === pick[1], col: x, a: ln.a, b: ln.b });
+      });
+    }
   }
 
   // ---- interior features per zone ----
   const islands = [];
-  for (const [zi, z] of zones.entries()) {
-    const iw = z.x1 - z.x0 - 1; // interior width
-    const ih = H - 3;
-    if (Z === 1 && li >= 2 && li <= 3) {
+  const tight = wi === 3; // space compartments are cramped enough as they are
+  for (const z of zones) {
+    const iw = z.x1 - z.x0 - 1, ih = z.yi1 - z.yi0 + 1;
+    if (plan.divider) {
       // divider with a walk-through opening
       const dx = z.x0 + Math.floor((z.x1 - z.x0) / 2);
-      const open = r.chance(0.5) ? [2, 3] : [H - 3, H - 4];
-      for (let y = 2; y <= H - 2; y++) if (!open.includes(y)) set(dx, y, 'counter');
+      const open = r.chance(0.5) ? [z.yi0, z.yi0 + 1] : [z.yi1, z.yi1 - 1];
+      for (let y = z.yi0; y <= z.yi1; y++) if (!open.includes(y)) set(dx, y, 'counter');
       continue;
     }
-    if (li === 0 && zi === 0) {
+    if (tight || iw < 5 || ih < 4) continue;
+    if (li === 0) {
       const len = Math.min(3, iw - 4);
       if (len < 1) continue;
-      const sx = z.x0 + 1 + Math.floor((iw - len) / 2);
-      const sy = 2 + Math.floor(ih / 2);
+      const sx = z.x0 + 1 + Math.floor((iw - len) / 2), sy = z.yi0 + Math.floor(ih / 2);
+      if (![...Array(len)].every((_, k) => interiorOf(z, sx + k, sy))) continue;
       for (let x = sx; x < sx + len; x++) set(x, sy, 'counter');
       islands.push({ x0: sx, x1: sx + len - 1, y: sy });
       continue;
     }
-    if (iw >= 5) {
-      const len = Math.max(2, Math.min(iw - 4, r.int(2, 4)));
-      const sx = z.x0 + 2 + r.int(0, Math.max(0, iw - 4 - len));
-      const sy = r.int(3, H - 4);
-      const thick = li >= 5 && iw >= 6 && r.chance(0.4) ? 2 : 1;
-      for (let x = sx; x < sx + len; x++) for (let d = 0; d < thick; d++) if (sy + d <= H - 3) set(x, sy + d, 'counter');
-      islands.push({ x0: sx, x1: sx + len - 1, y: sy });
+    const len = Math.max(2, Math.min(iw - 4, r.int(2, 4)));
+    const sx = z.x0 + 2 + r.int(0, Math.max(0, iw - 4 - len));
+    const sy = r.int(z.yi0 + 1, Math.max(z.yi0 + 1, z.yi1 - 1));
+    const thick = li >= 5 && iw >= 6 && ih >= 5 && r.chance(0.4) ? 2 : 1;
+    let ok = true;
+    for (let x = sx; x < sx + len; x++) for (let d = 0; d < thick; d++) ok = ok && interiorOf(z, x, sy + d);
+    if (!ok) continue;
+    for (let x = sx; x < sx + len; x++) for (let d = 0; d < thick; d++) set(x, sy + d, 'counter');
+    islands.push({ x0: sx, x1: sx + len - 1, y: sy });
+  }
+  // ---- pits: lava holes, crevasses and holes in the cloud you can fall through ----
+  const pitWorld = { 1: 4, 2: 2, 4: 4 }[wi];
+  if (pitWorld != null && li >= pitWorld) {
+    const want = li >= 8 || mp ? 2 : 1;
+    let made = 0;
+    for (const z of r.shuffle(zones.slice())) {
+      if (made >= want) break;
+      const cand = [];
+      for (let y = z.yi0 + 1; y <= z.yi1 - 1; y++) for (let x = z.x0 + 2; x <= z.x1 - 2; x++) {
+        const pw = wi === 1 ? 1 : 2, ph = wi === 1 ? 2 : r.int(1, 2);
+        let ok = true;
+        for (let dy = -1; dy <= ph && ok; dy++) for (let dx = -1; dx <= pw && ok; dx++) ok = interiorOf(z, x + dx, y + dy) && !at(x + dx, y + dy).bridgeEnd;
+        if (ok) cand.push([x, y, pw, ph]);
+      }
+      if (!cand.length) continue;
+      const [x, y, pw, ph] = r.pick(cand);
+      for (let dy = 0; dy < ph; dy++) for (let dx = 0; dx < pw; dx++) set(x + dx, y + dy, 'void', { pit: true });
+      made++;
     }
   }
 
   // ---- shifting walls (later levels): pairs of tiles that rise/sink in opposite phase ----
   const shifters = [];
   if (li >= 5) {
-    const floorTiles = tiles.filter((t) => t.k === 'floor' && t.y >= 2 && t.y <= H - 2);
+    const floorTiles = tiles.filter((t) => t.k === 'floor' && t.zi != null && t.y >= zones[t.zi].yi0 && t.y <= zones[t.zi].yi1);
     const n = li >= 8 ? 3 : 2;
     for (let i = 0; i < n * 3 && shifters.length < n; i++) {
       const t = r.pick(floorTiles);
@@ -149,7 +208,6 @@ function tryBuild(wi, liIn, seed) {
     }
   }
 
-  // ---- station placement ----
   // ---- moving counters: a counter on a rail gliding along an interior row (from level 4) ----
   const movers = [];
   const nMovers = mp ? 2 : li >= 7 ? 2 : li >= 3 ? 1 : 0;
@@ -159,7 +217,7 @@ function tryBuild(wi, liIn, seed) {
     // try spans that leave at least one walkable column at either end of the rail
     const spans = [[z.x0 + 2, z.x1 - 2], [z.x0 + 1, z.x1 - 2], [z.x0 + 2, z.x1 - 1]].filter(([a, b]) => b - a >= 2);
     const opts = [];
-    for (const [tx0, tx1] of spans) for (let y = 2; y <= H - 3; y++) {
+    for (const [tx0, tx1] of spans) for (let y = z.yi0; y <= z.yi1; y++) {
       let good = true;
       for (let x = tx0; x <= tx1 && good; x++) good = okCell(x, y) && okCell(x, y - 1) && okCell(x, y + 1);
       if (good) opts.push([tx0, tx1, y]);
@@ -168,7 +226,6 @@ function tryBuild(wi, liIn, seed) {
     const [tx0, tx1, y] = r.pick(opts);
     for (let x = tx0; x <= tx1; x++) at(x, y).track = true;
     movers.push({ x0: tx0, x1: tx1, y, period: 9 + (tx1 - tx0) * 1.2, phase: r() });
-    if (mp && movers.length < nMovers && zones.length === 1) break;
   }
 
   const recipes = LEVEL_RECIPES[mp ? 7 : li].map((ri) => worldRecipes(wi)[ri]);
@@ -176,7 +233,9 @@ function tryBuild(wi, liIn, seed) {
   const methods = new Set(ings.map((id) => world.ingredients.find((g) => g.id === id).method));
   const interior = (t) => t && (t.k === 'floor' || t.k === 'bridge') && !t.wallShift;
   const candidates = tiles.filter((t) => t.k === 'counter' && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => interior(at(t.x + dx, t.y + dy))));
-  const zoneOf = (x) => zones.findIndex((z) => x >= z.x0 && x <= z.x1);
+  const zoneOf = (t) => (t.zi != null ? t.zi : -1);
+  const outside = (q) => !q || q.k === 'void' || q.k === 'wall';
+  const back = (t) => outside(at(t.x, t.y - 1)), front = (t) => !at(t.x, t.y + 1) || at(t.x, t.y + 1).k === 'void';
   const free = new Set(candidates);
   const take = (pred, prefer) => {
     let pool = [...free].filter(pred);
@@ -186,26 +245,30 @@ function tryBuild(wi, liIn, seed) {
     if (t) free.delete(t);
     return t;
   };
-  const lastZ = zones.length - 1;
+  // zones in reading order; the rightmost one serves (window), the leftmost holds the larder (bins)
+  const Z = zones.length;
+  const firstZ = zones.reduce((a, z) => (z.x0 < a.x0 || (z.x0 === a.x0 && z.y0 < a.y0) ? z : a)).i;
+  const lastZ = zones.reduce((a, z) => (z.x1 > a.x1 || (z.x1 === a.x1 && z.y1 > a.y1) ? z : a)).i;
+  const nth = (k) => zones[(firstZ + k) % Z].i;
   const stations = [];
   const put = (t, st, extra = {}) => { if (!t) return; t.st = st; Object.assign(t, extra); stations.push(t); };
   // ---- factory: conveyor belts along the back row bridging zones, with a reroute lever ----
   const belts = [];
   if (wi === 6 && li >= 1) {
-    let x0 = zones[0].x0 + 2, x1 = zones[Math.min(1, lastZ)].x1 - 2;
-    if (Z === 1) { x0 = zones[0].x0 + 2; x1 = zones[0].x1 - 2; }
+    const backs = zones.filter((z) => z.wall && z.y0 === 0).sort((a, b) => a.x0 - b.x0);
+    const z0 = backs[0], z1 = backs[1] && gaps.some((g) => g.dir === 'x' && ((g.a === z0.i && g.b === backs[1].i))) ? backs[1] : z0;
     const line = [];
-    for (let x = x0; x <= x1; x++) {
+    for (let x = z0.x0 + 2; x <= z1.x1 - 2; x++) {
       const t = at(x, 1);
-      if (t.k === 'void') set(x, 1, 'counter', { overVoid: true });
-      const tt = at(x, 1);
-      line.push([x, 1]);
+      if (t.k === 'void' && !t.pit) set(x, 1, 'counter', { overVoid: true });
+      if (at(x, 1).k === 'counter') line.push([x, 1]);
     }
     // contiguous run only
     const runs = [];
     let cur = [];
     for (const p of line) { if (cur.length && p[0] !== cur[cur.length - 1][0] + 1) { runs.push(cur); cur = []; } cur.push(p); }
     if (cur.length) runs.push(cur);
+    for (const t of tiles) if (t.overVoid && !runs.some((rn) => rn.length >= 3 && rn.some(([x, y]) => x === t.x && y === t.y))) set(t.x, t.y, 'void');
     const best = runs.sort((a, b) => b.length - a.length)[0];
     if (best && best.length >= 3) {
       best.forEach(([x, y], i) => { const t = at(x, y); free.delete(t); t.belt = belts.length; t.beltI = i; });
@@ -218,35 +281,35 @@ function tryBuild(wi, liIn, seed) {
     }
   }
 
-
-  // delivery window on the outer right edge of the last zone (or the front row), dish return near it
-  const outerX = zones[lastZ].x1;
-  const win = take((t) => t.x === outerX && t.y >= 2 && t.y <= H - 2, (a, b) => Math.abs(a.y - H / 2) - Math.abs(b.y - H / 2));
+  // delivery window on the outer right edge of the rightmost zone, dish return near it
+  const rightOpen = (t) => { const q = at(t.x + 1, t.y); return !q || (q.k === 'void' && !q.pit && !gaps.some((g) => g.dir === 'x' && g.x0 === t.x + 1)); };
+  const win = take((t) => zoneOf(t) === lastZ && rightOpen(t),
+    (a, b) => (b.x - a.x) || Math.abs(a.y - (zones[lastZ].y0 + zones[lastZ].y1) / 2) - Math.abs(b.y - (zones[lastZ].y0 + zones[lastZ].y1) / 2));
   put(win, 'window');
-  put(take((t) => zoneOf(t.x) === lastZ && Math.abs(t.x - win.x) + Math.abs(t.y - win.y) <= 4 && t !== win, (a, b) => (Math.abs(a.x - win.x) + Math.abs(a.y - win.y)) - (Math.abs(b.x - win.x) + Math.abs(b.y - win.y)) || (a.y - b.y)), 'return');
-  const sinkZ = Z > 1 ? r.int(0, lastZ) : 0;
-  put(take((t) => zoneOf(t.x) === sinkZ && (t.y === 1 || t.y === H - 1)), 'sink');
-  put(take((t) => zoneOf(t.x) === lastZ && t.y !== H - 1), 'plates');
+  put(take((t) => zoneOf(t) === lastZ && Math.abs(t.x - win.x) + Math.abs(t.y - win.y) <= 4 && t !== win, (a, b) => (Math.abs(a.x - win.x) + Math.abs(a.y - win.y)) - (Math.abs(b.x - win.x) + Math.abs(b.y - win.y)) || (a.y - b.y)), 'return');
+  const sinkZ = Z > 1 ? r.int(0, Z - 1) : 0;
+  put(take((t) => zoneOf(t) === sinkZ && (back(t) || front(t))), 'sink');
+  put(take((t) => zoneOf(t) === lastZ && !front(t)), 'plates');
   // bins: mostly in the first zone so ingredients have to travel
-  for (const id of ings) put(take((t) => zoneOf(t.x) === 0 && (t.y === 1 || t.x === zones[0].x0)), 'bin', { ing: id });
+  for (const id of ings) put(take((t) => zoneOf(t) === firstZ && (back(t) || t.x === zones[firstZ].x0)), 'bin', { ing: id });
   const nBoards = mp ? 4 : 1 + (li >= 3 ? 1 : 0) + (li >= 7 ? 1 : 0);
-  for (let i = 0; i < nBoards; i++) put(take((t) => zoneOf(t.x) === i % (Z) ), 'board');
-  const dup = (m) => (mp ? 2 : li >= 6 && ings.length >= 3 ? 2 : 1);
-  if (methods.has('pan')) for (let i = 0; i < dup('pan'); i++) put(take((t) => t.y === 1 && zoneOf(t.x) === (i + 1) % Z), 'pan');
-  if (methods.has('pot')) for (let i = 0; i < dup('pot'); i++) put(take((t) => t.y === 1 && zoneOf(t.x) === (i + Z - 1) % Z), 'pot');
-  if (methods.has('oven')) for (let i = 0; i < (li >= 8 || mp ? 2 : 1); i++) put(take((t) => (t.y === 1 || t.y === H - 1) && zoneOf(t.x) === (lastZ - i + Z) % Z), 'oven');
-  put(take((t) => t.y === H - 1 || t.y === 1), 'trash');
+  for (let i = 0; i < nBoards; i++) put(take((t) => zoneOf(t) === nth(i)), 'board');
+  const dup = () => (mp ? 2 : li >= 6 && ings.length >= 3 ? 2 : 1);
+  if (methods.has('pan')) for (let i = 0; i < dup(); i++) put(take((t) => back(t) && zoneOf(t) === nth(i + 1)), 'pan');
+  if (methods.has('pot')) for (let i = 0; i < dup(); i++) put(take((t) => back(t) && zoneOf(t) === nth(i + Z - 1)), 'pot');
+  if (methods.has('oven')) for (let i = 0; i < (li >= 8 || mp ? 2 : 1); i++) put(take((t) => (back(t) || front(t)) && zoneOf(t) === (i ? nth(Z - 1 + i) : lastZ)), 'oven');
+  put(take((t) => front(t) || back(t)), 'trash');
   if (methods.has('pan') || methods.has('pot') || methods.has('oven') || wi === 2 || wi === 4) put(take(() => true), 'ext');
-  if (Z > 1 && r.chance(0.6)) put(take((t) => zoneOf(t.x) !== 0), 'trash');
+  if (Z > 1 && r.chance(0.6)) put(take((t) => zoneOf(t) !== firstZ), 'trash');
   if (mp) {
     // more workstations so four cooks aren't queueing: a second sink, plate stack and extinguisher
-    put(take((t) => zoneOf(t.x) !== sinkZ && (t.y === 1 || t.y === H - 1)), 'sink');
-    put(take((t) => zoneOf(t.x) === 0), 'plates');
-    put(take((t) => t.y === H - 1), 'trash');
+    put(take((t) => zoneOf(t) !== sinkZ && (back(t) || front(t))), 'sink');
+    put(take((t) => zoneOf(t) === firstZ), 'plates');
+    put(take((t) => front(t)), 'trash');
   }
 
   if (belts.length && li >= 3) {
-    const lever = take((t) => zoneOf(t.x) === 0 && t.y !== 1);
+    const lever = take((t) => zoneOf(t) === firstZ && t.y !== 1);
     if (lever) { put(lever, 'lever', { belt: 0 }); belts[0].lever = [lever.x, lever.y]; }
   }
   for (const t of free) if (!t.st) t.st = 'counter';
@@ -255,9 +318,10 @@ function tryBuild(wi, liIn, seed) {
   // ---- spawns ----
   const spawnPool = [];
   for (let i = 0; i < 4; i++) {
-    const z = zones[i % Z];
-    const opts = tiles.filter((t) => t.k === 'floor' && !t.wallShift && !t.push && !t.track && t.x > z.x0 && t.x < z.x1 && t.y >= 2 && t.y <= H - 2 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y));
-    opts.sort((a, b) => Math.abs(a.y - H / 2) - Math.abs(b.y - H / 2) || Math.abs(a.x - (z.x0 + z.x1) / 2) - Math.abs(b.x - (z.x0 + z.x1) / 2));
+    const z = zones[nth(i % Z)];
+    const opts = tiles.filter((t) => t.k === 'floor' && t.zi === z.i && !t.wallShift && !t.push && !t.track && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y));
+    const mx = (z.x0 + z.x1) / 2, my = (z.y0 + z.y1) / 2;
+    opts.sort((a, b) => Math.abs(a.y - my) - Math.abs(b.y - my) || Math.abs(a.x - mx) - Math.abs(b.x - mx));
     const s = opts[Math.min(opts.length - 1, i < Z ? 0 : 1 + i)];
     if (!s) return null;
     spawnPool.push([s.x, s.y]);
@@ -286,13 +350,14 @@ function tryBuild(wi, liIn, seed) {
       if (li >= 2) hz.geysers = r.shuffle(fl.slice()).slice(0, Math.min(1 + Math.floor(li / 3), 4)).map((t, i) => ({ x: t.x, y: t.y, period: 9, phase: i * 0.37 }));
       if (li >= 4) {
         // a fire wall sweeps across an interior column of one zone
-        const z = zones[r.int(0, lastZ)];
+        const z = r.pick(zones.filter((q) => q.x1 - q.x0 >= 4)) || zones[0];
         const fx = r.int(z.x0 + 2, z.x1 - 2);
-        const cells = tiles.filter((t) => t.x === fx && t.k === 'floor' && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y)).map((t) => [t.x, t.y]);
+        const cells = tiles.filter((t) => t.x === fx && t.zi === z.i && t.k === 'floor' && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y)).map((t) => [t.x, t.y]);
         hz.firewalls = [{ cells, period: 10, on: 2.6, phase: 0.2 }];
         if (li >= 7) {
-          const fy = r.int(3, H - 3);
-          hz.firewalls.push({ cells: tiles.filter((t) => t.y === fy && t.k === 'floor' && Math.abs(t.x - fx) > 1 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y)).map((t) => [t.x, t.y]), period: 10, on: 2.6, phase: 0.7 });
+          const z2 = r.pick(zones);
+          const fy = r.int(z2.yi0, z2.yi1);
+          hz.firewalls.push({ cells: tiles.filter((t) => t.y === fy && t.zi === z2.i && t.k === 'floor' && Math.abs(t.x - fx) > 1 && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y)).map((t) => [t.x, t.y]), period: 10, on: 2.6, phase: 0.7 });
         }
       }
       break;
@@ -303,9 +368,9 @@ function tryBuild(wi, liIn, seed) {
         hz.lasers = [];
         for (const b of bridges) hz.lasers.push({ cells: b.tiles, period: 7, on: 2.8, phase: (hz.lasers.length * 0.5) % 1 });
         if (!hz.lasers.length || li >= 6) {
-          const z = zones[0];
+          const z = zones[firstZ];
           const lx = z.x0 + Math.floor((z.x1 - z.x0) / 2);
-          hz.lasers.push({ cells: tiles.filter((t) => t.x === lx && t.k === 'floor' && !t.wallShift && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y)).map((t) => [t.x, t.y]), period: 8, on: 2.4, phase: 0.25 });
+          hz.lasers.push({ cells: tiles.filter((t) => t.x === lx && t.zi === z.i && t.k === 'floor' && !t.wallShift && !spawnPool.some((s) => s[0] === t.x && s[1] === t.y)).map((t) => [t.x, t.y]), period: 8, on: 2.4, phase: 0.25 });
         }
       }
       break;
@@ -326,8 +391,9 @@ function tryBuild(wi, liIn, seed) {
       hz.dilation = [];
       for (let t = 12; t < D; t += 11 + r() * 5) hz.dilation.push({ t, dur: 5 + r() * 3, scale: r.pick([0.55, 0.55, 1.6]) });
       if (li >= 2) {
+        const cuckooRows = [...new Set(tiles.filter((t) => t.k === 'floor').map((t) => t.y))];
         hz.cuckoo = [];
-        for (let t = 25; t < D; t += Math.max(12, 24 - li * 1.2) + r() * 4) hz.cuckoo.push({ t, row: r.int(2, H - 2) });
+        for (let t = 25; t < D; t += Math.max(12, 24 - li * 1.2) + r() * 4) hz.cuckoo.push({ t, row: r.pick(cuckooRows) });
       }
       break;
   }
@@ -340,7 +406,7 @@ function tryBuild(wi, liIn, seed) {
 
   return {
     world: wi, index: liIn, diff: li, mp, id: levelKey(wi, liIn), name: levelTitle(wi, liIn), W, H, seed, tiles,
-    zones, gaps, bridges, floes, islands, shifters, belts, stations, spawns: spawnPool, movers,
+    zones, gaps, bridges, floes, plan: { shape: plan.shape, pods: !!plan.pods }, islands, shifters, belts, stations, spawns: spawnPool, movers,
     recipes, duration: D, maxOrders: mp ? 5 : li < 2 ? 3 : li < 6 ? 4 : 5,
     orderGap: Math.max(9, 18 - li), stars: [round5(X * 0.3), round5(X * 0.55), round5(X * 0.8)], hz,
   };
@@ -350,8 +416,14 @@ function tryBuild(wi, liIn, seed) {
 export function validate(L) {
   const { W, H, tiles } = L;
   const at = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? tiles[y * W + x] : null);
-  const floeCols = new Set();
-  for (const f of L.floes) for (let x = f.x; x < f.x + f.w; x++) floeCols.add(x);
+  // cells a floe or shuttle passes over count as walkable (you wait for it)
+  const lane = new Set();
+  for (const f of L.floes) {
+    if (f.axis === 'x') { for (let x = f.x0; x <= f.x1 + f.w - 1; x++) for (let y = f.y; y < f.y + f.h; y++) lane.add(x + ',' + y); }
+    else for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y0; y <= f.y1 + f.h - 1; y++) lane.add(x + ',' + y);
+  }
+  const offB = new Set();
+  for (const b of L.bridges) if (b.shifting) for (const [x, y] of b.tiles) offB.add(x + ',' + y);
   const errors = [];
   for (const phase of [0, 1]) {
     const walk = (t) => {
@@ -361,8 +433,9 @@ export function validate(L) {
         if (s && ((s.phase < 0.25 ? 0 : 1) === phase)) return false;
       }
       if (t.track) return false;
-      if (t.k === 'floor' || t.k === 'bridge') return true;
-      if (t.k === 'void' && floeCols.has(t.x) && t.y >= 2 && t.y <= H - 3) return true;
+      if (t.k === 'bridge') return !(phase === 1 && offB.has(t.x + ',' + t.y));
+      if (t.k === 'floor') return true;
+      if (t.k === 'void' && lane.has(t.x + ',' + t.y)) return true;
       return false;
     };
     const seen = new Set();

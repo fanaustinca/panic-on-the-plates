@@ -6,13 +6,25 @@ const frac = (v) => v - Math.floor(v);
 const TAU = Math.PI * 2;
 export const WARN = 1.2; // seconds of telegraph before any timed hazard bites
 
-/** Ice-floe rectangle at time t: { x, y, w, h, vy } in tile units. */
-export function floeAt(f, t) {
-  const k = TAU * (t / f.period + f.phase);
-  const y = f.y0 + (f.y1 - f.y0) * (0.5 - 0.5 * Math.cos(k));
-  const vy = (f.y1 - f.y0) * 0.5 * Math.sin(k) * TAU / f.period;
-  return { x: f.x, y, w: f.w, h: f.h, vy };
+/** Floe / shuttle position along its path (0..1) at time t. Shuttles (dwell > 0) wait at each end. */
+function floeU(f, t) {
+  const c = frac(t / f.period + f.phase);
+  if (!f.dwell) return 0.5 - 0.5 * Math.cos(TAU * c);
+  const d = f.dwell / 2, ease = (k) => k * k * (3 - 2 * k);
+  if (c < d) return 0;
+  if (c < 0.5 - d) return ease((c - d) / (0.5 - 2 * d));
+  if (c < 0.5 + d) return 1;
+  if (c < 1 - d) return 1 - ease((c - 0.5 - d) / (0.5 - 2 * d));
+  return 0;
 }
+/** Ice-floe (or factory shuttle) rectangle at time t: { x, y, w, h, vx, vy } in tile units. */
+export function floeAt(f, t) {
+  const u = floeU(f, t), du = (floeU(f, t + 0.01) - floeU(f, t - 0.01)) / 0.02;
+  if (f.axis === 'x') return { x: f.x0 + (f.x1 - f.x0) * u, y: f.y, w: f.w, h: f.h, vx: (f.x1 - f.x0) * du, vy: 0 };
+  return { x: f.x, y: f.y0 + (f.y1 - f.y0) * u, w: f.w, h: f.h, vx: 0, vy: (f.y1 - f.y0) * du };
+}
+/** Is a shuttle about to move off (for its warning light)? */
+export function floeMoving(f, t) { const u = floeU(f, t), v = floeU(f, t + 0.6); return Math.abs(v - u) > 1e-4; }
 
 /** Cycle helper: returns { on, warn, k } for a hazard that is on for `on` seconds every `period`. */
 export function cycle(t, period, on, phase = 0) {
@@ -119,7 +131,7 @@ export function blockedAt(L, x, y, t) {
 export function supportAt(L, px, py, t) {
   for (const f of L.floes) {
     const r = floeAt(f, t);
-    if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return { ok: true, vx: 0, vy: r.vy, floe: true };
+    if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return { ok: true, vx: r.vx, vy: r.vy, floe: true };
   }
   const x = Math.floor(px), y = Math.floor(py);
   const tl = tileAt(L, x, y);
@@ -131,7 +143,7 @@ export function supportAt(L, px, py, t) {
   if (tl.k === 'bridge') {
     const b = L.bridges.find((q) => q.tiles.some(([bx, by]) => bx === x && by === y));
     if (b && bridgeOff(b, t)) return { ok: false };
-    return { ok: true, vx: 0, vy: 0, rope: tl.rope };
+    return { ok: true, vx: 0, vy: 0, rope: tl.rope ? tl.dir || 'x' : false };
   }
   if (tl.k === 'counter' || tl.k === 'wall') return { ok: true, vx: 0, vy: 0 };
   return { ok: false };

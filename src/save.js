@@ -14,17 +14,17 @@ export function writeSave(s) { try { localStorage.setItem(KEY, JSON.stringify(s)
 
 const unlockAll = () => new URLSearchParams(location.search).has('unlock');
 export const totalStars = (s) => Object.values(s.stars).reduce((a, b) => a + b, 0);
-export const worldNeed = (wi) => wi * 12;
-export function worldUnlocked(s, wi) { return unlockAll() || totalStars(s) >= worldNeed(wi); }
-/** The first level of every world is always open; the rest need the world's star gate + a star on the previous level. */
+/** Every world is open from the start: play them in any order. */
+export function worldUnlocked() { return true; }
+/** Level 1 of every world is always open; each next level needs at least one star on the one before. */
 export function levelUnlocked(s, wi, li) {
   if (unlockAll() || li === 0) return true;
-  if (!worldUnlocked(s, wi)) return false;
   return (s.stars[`${wi}-${li - 1}`] || 0) > 0;
 }
+/** A world's outfit is earned by clearing its first level. */
 export function outfitUnlocked(s, id) {
   const o = OUTFITS.find((q) => q.id === id);
-  return !o || o.world < 0 || worldUnlocked(s, o.world);
+  return !o || o.world < 0 || unlockAll() || (s.stars[`${o.world}-0`] || 0) > 0;
 }
 /** Records a finished shift and pays out coins; returns the coins earned. */
 export function recordResult(s, key, stars, score) {

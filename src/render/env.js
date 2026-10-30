@@ -7,6 +7,7 @@ import { buildShip, WATERLINE } from './ship.js';
 import { makeOcean } from './ocean.js';
 import { makeLava } from './lava.js';
 import { buildFactory } from './factory.js';
+import { basaltIslands, glacierIslands, cloudIslands, stationModules, clockIslands, makeGear } from './islands.js';
 
 function patternTex(draw, rep) {
   const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -29,8 +30,6 @@ export const seaTex = (deep = '#1a6a9a', light = '#2f8fc4') => patternTex((g, n)
 }, 10);
 import { rng } from '../rng.js';
 
-/** Where the great jungle tree stands (the treehouse pods hang from it). */
-export function trunkSpot(W, H) { return { x: 0, z: -H / 2 - 3.6, r: 2.4 }; }
 
 function mistTex() {
   const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -48,15 +47,51 @@ function mistTex() {
   return t;
 }
 
+/** Cloudy blue-green planet for the space station's view. */
+function earthTex(r) {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1a4a8a'; g.fillRect(0, 0, 1024, 512);
+  for (let i = 0; i < 26; i++) {
+    const x = r() * 1024, y = 90 + r() * 330, rr = 30 + r() * 90;
+    g.fillStyle = ['#3a7a3a', '#5a8a3a', '#a89a6a'][i % 3];
+    g.beginPath();
+    for (let k = 0; k < 14; k++) { const a = (k / 14) * Math.PI * 2, d = rr * (0.6 + r() * 0.5); g.lineTo(x + Math.cos(a) * d * 1.4, y + Math.sin(a) * d); }
+    g.fill();
+  }
+  g.fillStyle = '#f2f6fa'; g.fillRect(0, 0, 1024, 34); g.fillRect(0, 478, 1024, 34);
+  for (let i = 0; i < 90; i++) { g.fillStyle = `rgba(255,255,255,${0.25 + r() * 0.4})`; g.beginPath(); g.ellipse(r() * 1024, r() * 512, 20 + r() * 70, 5 + r() * 12, (r() - 0.5) * 0.4, 0, 7); g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** The clock tower's great dial: frosted glass lit from behind, Roman numerals, minute ticks. */
+function dialTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 1024;
+  const g = c.getContext('2d'), m = 512;
+  const grd = g.createRadialGradient(m, m, 40, m, m, m);
+  grd.addColorStop(0, '#fff2d0'); grd.addColorStop(0.8, '#f2c880'); grd.addColorStop(1, '#c08a40');
+  g.fillStyle = grd; g.fillRect(0, 0, 1024, 1024);
+  g.strokeStyle = 'rgba(90,60,20,0.35)'; g.lineWidth = 6;
+  for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; g.beginPath(); g.moveTo(m + Math.cos(a) * 120, m + Math.sin(a) * 120); g.lineTo(m + Math.cos(a) * 500, m + Math.sin(a) * 500); g.stroke(); }
+  for (const rr of [120, 300, 380]) { g.beginPath(); g.arc(m, m, rr, 0, 7); g.stroke(); }
+  g.fillStyle = '#2a1a0a';
+  for (let k = 0; k < 60; k++) { const a = (k / 60) * Math.PI * 2; const l = k % 5 ? 14 : 34; g.save(); g.translate(m + Math.cos(a) * 470, m + Math.sin(a) * 470); g.rotate(a); g.fillRect(-l, -3, l, 6); g.restore(); }
+  g.font = '700 82px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  ['XII', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'].forEach((n, k) => { const a = (k / 12) * Math.PI * 2 - Math.PI / 2; g.fillText(n, m + Math.cos(a) * 385, m + Math.sin(a) * 385); });
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export const STYLE = {
   pirate: { floor: 'planks', wall: 'hull', top: 'wood', side: 0x7a4a26, trim: 0x3a2a1a, light: 0xfff2dc, hemi: [0xbfe3ff, 0x6a4a2a], sun: 2.6, amb: 1.0, exposure: 1.05 },
   glacier: { floor: 'ice', wall: 'snowbrick', top: 'ice', side: 0x8fc0da, trim: 0x5a98bc, light: 0xf2f8ff, hemi: [0xe6f6ff, 0x7aa8c8], sun: 2.4, amb: 1.1, exposure: 1.0 },
   volcano: { floor: 'basalt', wall: 'obsidian', top: 'stone', side: 0x2e2628, trim: 0xff6a20, light: 0xffc890, hemi: [0xff8a50, 0x2a0a06], sun: 2.2, amb: 0.8, exposure: 1.15 },
   space: { floor: 'metalgrid', wall: 'hullpanel', top: 'panel', side: 0xaab4c2, trim: 0x2ad0ff, light: 0xe8f0ff, hemi: [0x8aa8ff, 0x1a1a2a], sun: 2.6, amb: 0.85, exposure: 1.1 },
-  clouds: { floor: 'cloudtile', wall: 'marble', top: 'marble', side: 0xe6dccb, trim: 0xd8b050, light: 0xfff6e6, hemi: [0xdfe9ff, 0xb8a8d8], sun: 2.5, amb: 1.1, exposure: 1.0 },
+  clouds: { floor: 'cloudtile', wall: 'marble', top: 'marble', side: 0xb8c8f0, trim: 0xd8b050, light: 0xfff6e6, hemi: [0xdfe9ff, 0xb8a8d8], sun: 2.5, amb: 1.1, exposure: 1.0 },
   jungle: { floor: 'treeplanks', wall: 'logs', top: 'wood', side: 0x7a5a2a, trim: 0x3a7a2a, light: 0xfff0c8, hemi: [0xcfffb0, 0x3a5a2a], sun: 2.4, amb: 1.0, exposure: 1.05 },
   factory: { floor: 'steelplate', wall: 'brickfactory', top: 'steel', side: 0x56606c, trim: 0xffc020, light: 0xfff0dc, hemi: [0xcfd8e6, 0x3a3a3a], sun: 2.4, amb: 0.95, exposure: 1.05 },
-  library: { floor: 'parquet', wall: 'bookshelf', top: 'darkwood', side: 0x4a2a1a, trim: 0xd8a84a, light: 0xffe0b0, hemi: [0xb89aff, 0x3a2a1a], sun: 2.2, amb: 0.9, exposure: 1.15 },
+  library: { floor: 'clockfloor', wall: 'clockwall', top: 'brass', side: 0x5a3420, trim: 0xd8a84a, light: 0xffe0b0, hemi: [0xffd8a8, 0x3a2414], sun: 2.3, amb: 0.95, exposure: 1.12 },
 };
 
 /** Build backdrop group for a world; returns { group, update(t) }. */
@@ -107,6 +142,7 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
     case 'glacier': {
       ocean = makeOcean({ preset: 'calm', y: -1.6, deep: 0x0b3c58, shallow: 0x3aa6c8, sky: 0xd8f0ff, horizon: 0xf0fbff, foam: 0xffffff, fog: 0xdff3ff, fogNear: 34, fogFar: 95, ampScale: 0.8 });
       world.add(ocean.mesh);
+      if (L) glacierIslands(g, L, r);
       scatter(30, 1.05, 2.4, (x, z) => { const s = 0.3 + r() * 0.6; g.add(part(box(), mat(0xeaf8ff, { rough: 0.4 }), [x, -1.55, z], [s * 2, 0.15, s * 1.6], [0, r() * 3, 0])); });
       scatter(14, 1.3, 2.8, (x, z) => {
         const s = 0.8 + r() * 2.2;
@@ -121,15 +157,8 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       updaters.push((t) => lava.update(t));
       const rock = mat(0x241c1c, { flat: true, rough: 0.95 }), rock2 = mat(0x352a28, { flat: true, rough: 0.9 });
       const hot = mat(0x1e1412, { flat: true, rough: 0.85, emissive: 0xff3a00, ei: 0.1 });
-      // the kitchen stands on a basalt island: core block + a ragged skirt of boulders at the lava line
-      g.add(part(box(), mat(0x1a1416, { rough: 0.95 }), [0, -1.0, 0], [W + 0.2, 1.6, H + 0.2]));
-      const per = 2 * (W + H);
-      for (let d = 0; d < per; d += 0.8 + r() * 0.6) {
-        let x, z;
-        if (d < W) { x = -W / 2 + d; z = -H / 2 - 0.3; } else if (d < W + H) { x = W / 2 + 0.3; z = -H / 2 + d - W; } else if (d < 2 * W + H) { x = W / 2 - (d - W - H); z = H / 2 + 0.3; } else { x = -W / 2 - 0.3; z = H / 2 - (d - 2 * W - H); }
-        const s = 0.45 + r() * 0.55;
-        g.add(part(dode(), r() < 0.25 ? hot : r() < 0.5 ? rock2 : rock, [x + (r() - 0.5) * 0.4, -1.65 + r() * 0.3, z + (r() - 0.5) * 0.4], [s * 1.3, s * 0.8, s * 1.2], [r() * 3, r() * 3, r() * 3]));
-      }
+      // every zone is its own basalt island standing in the lava
+      if (L) basaltIslands(g, L, r);
       // cliff with two lavafalls pouring down behind the kitchen
       const cliffZ = -H / 2 - 3.2;
       for (let i = 0; i < 9; i++) {
@@ -177,26 +206,29 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       for (let i = 0; i < 1500; i++) { const v = new THREE.Vector3(r() - 0.5, r() - 0.5, r() - 0.5).normalize().multiplyScalar(60 + r() * 20); pts.push(v.x, v.y * 0.8 - 10, v.z); }
       starGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
       g.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.25, sizeAttenuation: true })));
-      const planet = part(sph(48), mat(0x5a4ad8, { rough: 0.8, emissive: 0x1a0a5a, ei: 0.6 }), [W * 0.9, -12, -H * 1.6], 9);
+      // the Earth far below the station, with a soft atmosphere halo
+      const planet = new THREE.Mesh(new THREE.SphereGeometry(40, 64, 40), new THREE.MeshStandardMaterial({ map: earthTex(r), roughness: 0.9, emissive: 0x0a2050, emissiveIntensity: 0.25 }));
+      planet.position.set(W * 0.4, -52, -30);
       g.add(planet);
-      g.add(part(tor(), mat(0xb8a8ff, { opacity: 0.6 }), [W * 0.9, -12, -H * 1.6], [13, 13, 0.4], [1.2, 0.3, 0]));
-      updaters.push((t) => { planet.rotation.y = t * 0.05; });
-      g.add(part(box(), mat(0x8a96a8, { metal: 0.6, rough: 0.4 }), [0, -0.9, 0], [W + 0.3, 1.4, H + 0.3]));
-      for (const s of [-1, 1]) g.add(part(box(), mat(0x1a3a8a, { metal: 0.5, rough: 0.3, emissive: 0x0a1a4a, ei: 0.5 }), [s * (W / 2 + 4), -0.6, 0], [6, 0.08, 2.4]));
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0x5ab0ff, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+      halo.scale.setScalar(104); halo.position.copy(planet.position);
+      g.add(halo);
+      updaters.push((t) => { planet.rotation.y = t * 0.01; });
+      if (L) stationModules(g, L, r, updaters);
       break;
     }
     case 'clouds': {
-      plane(0, -4, { material: new THREE.MeshStandardMaterial({ color: 0xc9d8ff, roughness: 1 }) });
+      plane(0, -12, { material: new THREE.MeshStandardMaterial({ color: 0x7a9ce0, roughness: 1 }) });
       const puff = mat(0xffffff, { rough: 1 });
       scatter(26, 0.9, 2.8, (x, z, i) => {
         const cg = new THREE.Group();
         for (let k = 0; k < 4; k++) cg.add(part(sph(14), puff, [(k - 1.5) * 0.9, r() * 0.3, r() * 0.6], 0.7 + r() * 0.6));
-        cg.position.set(x, -2.4 + r() * 1.5, z);
+        cg.position.set(x, -5 - r() * 3, z);
         g.add(cg);
         updaters.push((t) => { cg.position.x = x + Math.sin(t * 0.2 + i) * 0.6; });
       });
-      // floating marble base under the kitchen
-      g.add(part(cyl(8), mat(0xf2ece0, { rough: 0.5 }), [0, -0.7, 0], [W * 0.6, 1.2, H * 0.62]));
+      // every zone sits on its own cloud
+      if (L) cloudIslands(g, L, r, updaters);
       const balloon = new THREE.Group();
       balloon.add(part(sph(20), mat(0xe8553a), [0, 0, 0], [1, 1.2, 1]));
       balloon.add(part(box(), mat(0x8a5a2a), [0, -1.8, 0], 0.5));
@@ -206,34 +238,14 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       break;
     }
     case 'jungle': {
-      // the great tree: the treehouse pods hang off its branches (built with the pods, so they sway)
-      const tr = trunkSpot(W, H);
+      // the great tree itself rises through the middle of the kitchen (render/treehouse.js)
       const bm = new THREE.MeshStandardMaterial({ map: barkTex(), color: 0xb08a68, roughness: 0.95 });
-      bm.map = bm.map.clone(); bm.map.needsUpdate = true; bm.map.repeat.set(5, 9);
-      const tg = new THREE.CylinderGeometry(tr.r * 0.8, tr.r * 1.25, 46, 32, 40, true);
-      const tp = tg.attributes.position;
-      for (let i = 0; i < tp.count; i++) {
-        const x = tp.getX(i), y = tp.getY(i), z = tp.getZ(i), a = Math.atan2(z, x);
-        const k = 1 + 0.09 * Math.sin(a * 5 + y * 0.25) + 0.05 * Math.sin(a * 11 - y * 0.6) + (y < -18 ? (-18 - y) * 0.06 * (0.6 + 0.4 * Math.sin(a * 4)) : 0);
-        tp.setXYZ(i, x * k, y, z * k);
-      }
-      tg.computeVertexNormals();
-      const trunk = new THREE.Mesh(tg, bm);
-      trunk.position.set(tr.x, -9, tr.z);
-      trunk.castShadow = true; trunk.receiveShadow = true;
-      g.add(trunk);
-      // limbs up into the canopy
-      for (const [dx, h, out] of [[-1, 6, 7], [1, 8, 8], [-0.3, 11, 4], [0.6, 4, 5]]) {
-        g.add(branch([new THREE.Vector3(tr.x + dx * tr.r * 0.5, h - 3, tr.z), new THREE.Vector3(tr.x + dx * out * 0.5, h, tr.z - 0.5), new THREE.Vector3(tr.x + dx * out, h + 2.5, tr.z - 1.5)], 0.9, 0.3, bm));
-        leafClump(g, tr.x + dx * out, h + 3, tr.z - 1.5, 26, 2.6, r, dx > 0 ? '#3f8f32' : '#4a9a38');
-      }
-      for (let i = 0; i < 9; i++) leafClump(g, tr.x + (r() - 0.5) * W * 1.2, 10 + r() * 4, tr.z - 2 - r() * 4, 30, 3, r, ['#3f8f32', '#357a2a', '#4a9a38'][i % 3]);
+      bm.map = bm.map.clone(); bm.map.needsUpdate = true; bm.map.repeat.set(2, 9);
       // neighbouring trees in the haze, and two framing the kitchen at the sides
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 6; i++) {
         const side = i % 2 ? 1 : -1;
-        const x = side * (W / 2 + 4 + r() * 10), z = -H / 2 - 6 + r() * (H + 8), rr = 0.6 + r() * 1.1;
-        const t2 = part(cyl(14), bm, [x, -8, z], [rr, 40, rr]);
-        g.add(t2);
+        const x = side * (W / 2 + 6 + r() * 10), z = -H / 2 - 9 - r() * 10, rr = 0.6 + r() * 0.9;
+        g.add(part(cyl(14), bm, [x, -14, z], [rr, 24, rr]));
         leafClump(g, x, 6 + r() * 6, z, 18, 2.4, r, ['#357a2a', '#2f6a26'][i % 2]);
       }
       // hanging lianas
@@ -266,21 +278,53 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       fxInfo = buildFactory(g, L, W, H, r, updaters);
       break;
     case 'library': {
-      plane(0x0a0812, -6, {});
-      const covers = [0x8a2a2a, 0x2a4a8a, 0x2a6a3a, 0x8a6a2a, 0x5a2a6a];
-      scatter(18, 1.1, 2.6, (x, z, i) => {
-        const b = new THREE.Group();
-        b.add(part(box(), mat(covers[i % 5], { rough: 0.7 }), [0, 0, 0], [0.9, 0.18, 1.2]));
-        b.add(part(box(), mat(0xf4ead0), [0.05, 0, 0], [0.82, 0.14, 1.14]));
-        const y = -1 + r() * 4;
-        b.position.set(x, y, z);
-        b.rotation.set(r(), r() * 6, r() * 0.5);
-        g.add(b);
-        updaters.push((t) => { b.position.y = y + Math.sin(t * 0.7 + i) * 0.3; b.rotation.y += 0.002; });
-      });
-      g.add(part(box(), mat(0x2a1a10, { rough: 0.8 }), [0, -0.9, 0], [W + 0.2, 1.4, H + 0.2]));
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0x9a6aff, transparent: true, opacity: 0.5, depthWrite: false }));
-      glow.scale.setScalar(30); glow.position.set(0, -8, -6);
+      // inside a clock tower: platforms on the works, a huge backlit dial, gears and a pendulum
+      plane(0x140c08, -16, {});
+      const gears = L ? clockIslands(g, L, r) : [];
+      updaters.push((t) => gears.forEach((gr, i) => { gr.rotation.y = t * (i % 2 ? -0.12 : 0.15); }));
+      const brass = mat(0xc8964a, { metal: 0.85, rough: 0.32 }), brassD = mat(0x8a6430, { metal: 0.8, rough: 0.4 }), iron = mat(0x3a3a3e, { metal: 0.8, rough: 0.4 });
+      const zb = -H / 2;
+      // the dial: glass lit from the street outside, Roman numerals, hands that really go round
+      const dial = new THREE.Group();
+      dial.position.set(0, 3.2, zb - 7.5);
+      dial.add(part(new THREE.CircleGeometry(7.2, 64), new THREE.MeshBasicMaterial({ map: dialTex(), toneMapped: false })));
+      dial.add(part(new THREE.TorusGeometry(7.3, 0.35, 10, 72), brass));
+      dial.add(part(new THREE.TorusGeometry(7.9, 0.2, 8, 72), brassD));
+      const hourH = new THREE.Group(), minH = new THREE.Group();
+      hourH.add(part(box(), iron, [0, 2, 0.15], [0.32, 4.2, 0.08]));
+      minH.add(part(box(), iron, [0, 2.9, 0.25], [0.2, 6, 0.08]));
+      dial.add(hourH, minH, part(cyl(20), brass, [0, 0, 0.3], [0.45, 0.2, 0.45], [Math.PI / 2, 0, 0]));
+      g.add(dial);
+      const shaft = part(new THREE.PlaneGeometry(9, 26), new THREE.MeshBasicMaterial({ color: 0xffd090, transparent: true, opacity: 0.07, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), [0, -2, zb - 3], 1, [-1.1, 0, 0]);
+      g.add(shaft);
+      updaters.push((t) => { minH.rotation.z = -t * Math.PI * 2 / 60; hourH.rotation.z = -t * Math.PI * 2 / 720 - 1.2; });
+      // giant gears turning in the walls and the depths
+      const big = [];
+      for (const [x, y, z, R, axis, sp] of [[-W / 2 - 5, 1, zb - 3, 4.2, 'z', 0.1], [-W / 2 - 1.5, -3.5, zb - 4.5, 2.6, 'z', -0.16], [W / 2 + 5, 2.5, zb - 2.5, 3.6, 'z', -0.12], [W / 2 + 2.2, -2.4, zb - 4.6, 2.2, 'z', 0.2],
+        [-W / 4, -7, 0, 5, 'y', 0.05], [W / 3, -9, 2, 4, 'y', -0.07], [0, -12, -4, 6.5, 'y', 0.03]]) {
+        const gr = makeGear(R, Math.round(R * 8), 0.4, r() < 0.5 ? brass : brassD, 6);
+        gr.position.set(x, y, z);
+        if (axis === 'z') gr.rotation.x = Math.PI / 2;
+        g.add(gr);
+        big.push({ gr, axis, sp });
+      }
+      updaters.push((t) => big.forEach((b) => { if (b.axis === 'z') b.gr.rotation.y = t * b.sp; else b.gr.rotation.y = t * b.sp; }));
+      // the pendulum swinging far below the kitchen
+      const pend = new THREE.Group();
+      pend.position.set(0, 2, zb - 2);
+      pend.add(part(box(), brassD, [0, -9, 0], [0.18, 18, 0.18]));
+      pend.add(part(cyl(40), brass, [0, -18.5, 0], [2.2, 0.5, 2.2], [Math.PI / 2, 0, 0]));
+      g.add(pend);
+      updaters.push((t) => { pend.rotation.z = Math.sin(t * Math.PI * 2 / 4) * 0.32; });
+      // hanging weights on chains, and the tower walls in the gloom
+      for (const [x, z, l] of [[-W / 2 - 2.5, zb + 2, 9], [W / 2 + 2.8, zb + 4, 7], [-W / 2 - 3.5, H / 2 - 1, 11]]) {
+        g.add(part(cyl(6), iron, [x, 8 - l / 2, z], [0.06, l + 8, 0.06]));
+        g.add(part(cyl(14), brassD, [x, 4 - l / 2 - 1, z], [0.45, 1.6, 0.45]));
+      }
+      for (const s2 of [-1, 1]) g.add(part(box(), mat(0x2a1a10, { rough: 0.9 }), [s2 * (W / 2 + 11), 0, -4], [2, 40, 50]));
+      g.add(part(box(), mat(0x2a1a10, { rough: 0.9 }), [0, 0, zb - 9], [W + 30, 40, 1]));
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0xffc070, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+      glow.scale.setScalar(22); glow.position.set(0, 3.2, zb - 7.3);
       g.add(glow);
       break;
     }

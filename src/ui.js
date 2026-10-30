@@ -4,7 +4,7 @@ import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRec
 import { buildLevel, levelTitle, MP_LEVEL } from './levels.js';
 import { envAt, cuckooAt } from './hazards.js';
 import { ingIcon, dishIcon, chefIcon } from './render/thumbs.js';
-import { loadSave, writeSave, totalStars, worldUnlocked, levelUnlocked, outfitUnlocked, worldNeed, upgradeCost } from './save.js';
+import { loadSave, writeSave, totalStars, levelUnlocked, outfitUnlocked, upgradeCost } from './save.js';
 const lvLabel = (wi, li) => (li === MP_LEVEL ? `${wi + 1}-MP` : `${wi + 1}-${li + 1}`);
 import { sfx } from './audio.js';
 
@@ -48,16 +48,16 @@ export const WORLD_ICON = [
   '<svg viewBox="0 0 32 32" fill="#fff"><path d="M14 2h4l1 4 3 1.3 3.5-2 2.8 2.8-2 3.5L27.6 15l4 1v4l-4 1-1.3 3 2 3.5-2.8 2.8-3.5-2L19 30l-1 2h-4l-1-2-3-1.3-3.5 2-2.8-2.8 2-3.5L4.4 21l-4-1v-4l4-1 1.3-3-2-3.5 2.8-2.8 3.5 2L13 6z" transform="scale(.9) translate(2 1)"/><circle cx="16" cy="16" r="5" fill="#56606c"/></svg>',
   '<svg viewBox="0 0 32 32" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><circle cx="16" cy="17" r="12"/><path d="M16 9v8l5 4"/><path d="M10 3h12" /></svg>',
 ];
-const WORLD_COLOR = ['#2a6fa8', '#5aa8d8', '#c8441a', '#3a3a8a', '#7a9ae8', '#3a8a3a', '#6a727c', '#6a3aa8'];
+const WORLD_COLOR = ['#2a6fa8', '#5aa8d8', '#c8441a', '#3a3a8a', '#7a9ae8', '#3a8a3a', '#6a727c', '#a8742a'];
 const MECHANICS = [
   'The deck <b>tilts</b> side to side, and cannonballs punch <b>holes</b> in the floor. Watch for the red rings!',
-  'Floors are <b>slippery ice</b>. Ride the drifting <b>ice floes</b> across the channels.',
-  '<b>Fire walls</b>, <b>magma geysers</b> and falling <b>embers</b>. Embers can set counters alight!',
-  '<b>Laser doors</b> cycle on and off. When <b>gravity fails</b>, everything floats. Jump with Space!',
-  'Strong <b>gusts</b> push cooks around, and <b>lightning</b> strikes the red markers.',
-  '<b>Rope bridges</b> sway, and <b>monkeys</b> steal food from counters. Run into them to make them drop it!',
-  '<b>Conveyor belts</b> carry items between stations. Flip the <b>lever</b> to reverse them.',
-  'Random <b>time dilation</b> speeds up or slows down cooks and stoves. Jump over the <b>Cuckoo</b> when it sweeps a row!',
+  'Cook on <b>glaciers</b> joined by ice bridges. Floors are <b>slippery</b>, some channels need a drifting <b>ice floe</b>, and <b>crevasses</b> open in the ice.',
+  'Basalt islands in the lava: <b>fire walls</b>, <b>magma geysers</b>, <b>lava pits</b>, stepping stones that <b>sink</b>, and falling <b>embers</b> that set counters alight!',
+  'Tight <b>compartments</b> joined by <b>tube corridors</b>. <b>Laser doors</b> cycle in the tubes, and when <b>gravity fails</b> everything floats. Jump with Space!',
+  'Every kitchen floats on its own <b>cloud</b>. Strong <b>gusts</b> push cooks around, <b>lightning</b> strikes the red markers, and mind the <b>holes</b>!',
+  'Small <b>treehouses</b> built round the great tree, joined by swaying <b>rope bridges</b>. <b>Monkeys</b> steal food from counters: run into them to make them drop it!',
+  'Ride the <b>conveyor carts</b> back and forth between sections. <b>Belts</b> carry items between stations: flip the <b>lever</b> to reverse them.',
+  'Platforms on the clock\'s <b>gears</b>. Random <b>time warps</b> speed up or slow down cooks and stoves. Jump over the <b>cuckoo</b> when it sweeps a row!',
 ];
 export { MECHANICS };
 
@@ -185,7 +185,7 @@ export class UI {
         <div><b>3.</b> Combine everything on a <b>clean plate</b> and serve at the <b>ORDER UP</b> window.</div>
         <div><b>4.</b> Dirty plates come back. <b>Wash</b> them in the sink!</div>
         <div><b>Fire!</b> Overcooked food bursts into flames that spread. Grab the red <b>extinguisher</b> and hold Enter.</div>
-        <div><b>Stars</b> Earn stars to unlock new worlds and outfits. Quick serves earn tips &amp; combos.</div>
+        <div><b>Stars</b> Every world is open. Earn at least one star on a level to open the next one, and clear a world's first level for its outfit. Quick serves earn tips &amp; combos.</div>
       </div>
       <div class="actions"><button class="btn mustard" data-close>Let's cook!</button></div>`);
   }
@@ -297,7 +297,7 @@ export class UI {
       const grid = el('<div class="outfits"></div>');
       for (const o of OUTFITS) {
         const unlocked = outfitUnlocked(s, o.id);
-        const b = el(`<button class="outfit ${me.outfit === o.id ? 'on' : ''} ${unlocked ? '' : 'locked'}" data-lock="Reach ${o.world >= 0 ? WORLDS[o.world].name : ''}"><img src="${chefIcon(o.id, COLORS[me.color % COLORS.length], me.skin)}" alt="" />${esc(o.name)}</button>`);
+        const b = el(`<button class="outfit ${me.outfit === o.id ? 'on' : ''} ${unlocked ? '' : 'locked'}" data-lock="Clear ${o.world >= 0 ? WORLDS[o.world].name : ''} 1"><img src="${chefIcon(o.id, COLORS[me.color % COLORS.length], me.skin)}" alt="" />${esc(o.name)}</button>`);
         b.addEventListener('click', () => { if (!unlocked) { sfx.wrong(); return; } sfx.ui(); app.setProfile({ outfit: o.id }); });
         grid.appendChild(b);
       }
@@ -319,9 +319,8 @@ export class UI {
     app.memberList().forEach((m, i) => { if (m.vote) { if (!votes.has(m.vote)) votes.set(m.vote, []); votes.get(m.vote).push(i); } });
     const wt = el('<div class="worlds"></div>');
     WORLDS.forEach((w, wi) => {
-      const un = worldUnlocked(s, wi);
       const got = Array.from({ length: 10 }, (_, li) => s.stars[`${wi}-${li}`] || 0).reduce((a, b) => a + b, 0);
-      const b = el(`<button class="wtab ${this.viewWorld === wi ? 'on' : ''}" style="--wc:${WORLD_COLOR[wi]}" title="${esc(w.name)}">${WORLD_ICON[wi]}<span>${esc(w.name.split(' ').slice(-1)[0])}</span><span class="stars">${un ? `${got}/30` : `Lvl 1 open`}</span></button>`);
+      const b = el(`<button class="wtab ${this.viewWorld === wi ? 'on' : ''}" style="--wc:${WORLD_COLOR[wi]}" title="${esc(w.name)}">${WORLD_ICON[wi]}<span>${esc(w.name.split(' ').slice(-1)[0])}</span><span class="stars">${got}/30</span></button>`);
       b.addEventListener('click', () => { sfx.ui(); this.viewWorld = wi; this.renderSide(); app.previewWorld(wi); });
       wt.appendChild(b);
     });
@@ -335,7 +334,7 @@ export class UI {
       const vv = votes.get(key) || [];
       const b = el(`<button class="lvl ${me.vote === key ? 'on' : ''} ${un ? '' : 'locked'}"><span class="n">${wi + 1}-${li + 1}</span><span class="st">${[0, 1, 2].map((k) => `<span class="${k < st ? 'f' : ''}">★</span>`).join('')}</span><span class="votes">${vv.map((i) => `<i style="background:${hex(SLOT_COLORS[i])}"></i>`).join('')}</span></button>`);
       b.title = levelTitle(wi, li);
-      b.addEventListener('click', () => { if (!un) { sfx.wrong(); this.toast(worldUnlocked(s, wi) ? 'Earn a star on the previous level first' : `Collect ${worldNeed(wi)} stars to open the rest of ${WORLDS[wi].name}`); return; } sfx.ui(); app.vote(key); });
+      b.addEventListener('click', () => { if (!un) { sfx.wrong(); this.toast('Earn at least one star on the previous level first'); return; } sfx.ui(); app.vote(key); });
       lv.appendChild(b);
     }
     side.appendChild(lv);

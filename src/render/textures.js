@@ -39,7 +39,7 @@ export function floorTex(kind) {
   return canvasTex('floor-' + kind, 256, (g, s, r) => {
     const P = {
       planks: [0xb07a45, 0x8a5a30], treeplanks: [0x9c6a3a, 0x3a2412], ice: [0xd6f1fb, 0x9fd3ec], basalt: [0x3a3330, 0x251f1d], metalgrid: [0x8b96a6, 0x5c6676],
-      cloudtile: [0xf4f1ff, 0xd8d2f2], bamboo: [0xc9a85a, 0x9b7c38], steelplate: [0x7c848c, 0x5a6168], parquet: [0x8a5a3a, 0x5e3a24],
+      cloudtile: [0xf4f1ff, 0xd8d2f2], bamboo: [0xc9a85a, 0x9b7c38], steelplate: [0x7c848c, 0x5a6168], parquet: [0x8a5a3a, 0x5e3a24], clockfloor: [0x6a4026, 0x3a2414],
     }[kind] || [0xcccccc, 0x999999];
     g.fillStyle = hex(P[0]); g.fillRect(0, 0, s, s);
     if (kind === 'treeplanks') {
@@ -99,6 +99,15 @@ export function floorTex(kind) {
         g.fillStyle = grd; g.fillRect(x, 0, 32, s);
         g.fillStyle = 'rgba(90,60,20,0.6)'; const ny = (i * 53) % 128; g.fillRect(x, ny, 32, 4); g.fillRect(x, ny + 128, 32, 4);
       }
+    } else if (kind === 'clockfloor') {
+      // dark walnut boards with an inlaid brass dial on every tile
+      for (let i = 0; i < 4; i++) { g.fillStyle = hex(shade(P[0], (r() - 0.5) * 0.2)); g.fillRect(0, i * 64, s, 63); g.fillStyle = hex(P[1]); g.fillRect(0, i * 64 + 62, s, 2); }
+      const m = s / 2;
+      g.strokeStyle = '#d8a84a'; g.lineWidth = 7; g.beginPath(); g.arc(m, m, 92, 0, 7); g.stroke();
+      g.lineWidth = 2; g.beginPath(); g.arc(m, m, 78, 0, 7); g.stroke();
+      for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2, l = k % 3 ? 8 : 16; g.lineWidth = k % 3 ? 3 : 5; g.beginPath(); g.moveTo(m + Math.cos(a) * (76 - l), m + Math.sin(a) * (76 - l)); g.lineTo(m + Math.cos(a) * 76, m + Math.sin(a) * 76); g.stroke(); }
+      g.fillStyle = '#d8a84a'; g.beginPath(); g.arc(m, m, 8, 0, 7); g.fill();
+      g.strokeStyle = 'rgba(216,168,74,0.6)'; g.lineWidth = 3; g.strokeRect(3, 3, s - 6, s - 6);
     } else if (kind === 'parquet') {
       for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
         const vert = (x + y) % 2;
@@ -116,7 +125,7 @@ export function wallTex(kind) {
   return canvasTex('wall-' + kind, 256, (g, s, r) => {
     const P = {
       hull: [0x6b4424, 0x4a2c16], snowbrick: [0xeef6fb, 0xb9d3e3], obsidian: [0x241a26, 0x0f0a10], hullpanel: [0xd6dde6, 0x8d99a8],
-      marble: [0xf6f2ea, 0xd8cfc0], trunk: [0x6a4a2a, 0x4a3018], logs: [0x7a5230, 0x3a2412], brickfactory: [0x8a4a3a, 0x5a2e24], bookshelf: [0x4a2a1a, 0x2a160c],
+      marble: [0xf6f2ea, 0xd8cfc0], trunk: [0x6a4a2a, 0x4a3018], logs: [0x7a5230, 0x3a2412], brickfactory: [0x8a4a3a, 0x5a2e24], bookshelf: [0x4a2a1a, 0x2a160c], clockwall: [0x4a2a18, 0x2a160c],
     }[kind] || [0x888888, 0x555555];
     g.fillStyle = hex(P[0]); g.fillRect(0, 0, s, s);
     if (kind === 'snowbrick' || kind === 'brickfactory') {
@@ -124,6 +133,21 @@ export function wallTex(kind) {
         g.fillStyle = hex(shade(P[0], (r() - 0.5) * 0.18));
         g.fillRect(x * 64 + (y % 2) * 32 + 2, y * 32 + 2, 60, 28);
       }
+    } else if (kind === 'clockwall') {
+      // walnut panelling with brass gears set into it and a little dial in the top panel
+      for (const [x, y, w, h] of [[8, 8, s - 16, s / 2 - 12], [8, s / 2 + 4, s - 16, s / 2 - 12]]) {
+        g.fillStyle = hex(shade(P[0], 0.12)); g.fillRect(x, y, w, h);
+        g.strokeStyle = hex(P[1]); g.lineWidth = 5; g.strokeRect(x, y, w, h);
+      }
+      const gear = (cx, cy, R, n) => {
+        g.fillStyle = '#c8964a'; g.beginPath();
+        for (let k = 0; k < n * 2; k++) { const a = (k / (n * 2)) * Math.PI * 2, rr = k % 2 ? R : R * 0.82; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+        g.fill(); g.fillStyle = hex(P[1]); g.beginPath(); g.arc(cx, cy, R * 0.32, 0, 7); g.fill();
+      };
+      gear(70, 190, 44, 10); gear(140, 205, 28, 8); gear(196, 182, 36, 9);
+      g.fillStyle = '#f4e6c0'; g.beginPath(); g.arc(s / 2, 64, 36, 0, 7); g.fill();
+      g.strokeStyle = '#c8964a'; g.lineWidth = 5; g.stroke();
+      g.strokeStyle = '#2a1a0a'; g.lineWidth = 3; g.beginPath(); g.moveTo(s / 2, 64); g.lineTo(s / 2, 40); g.moveTo(s / 2, 64); g.lineTo(s / 2 + 18, 70); g.stroke();
     } else if (kind === 'bookshelf') {
       for (let row = 0; row < 4; row++) {
         g.fillStyle = hex(P[1]); g.fillRect(0, row * 64 + 56, s, 8);
@@ -168,7 +192,7 @@ export function wallTex(kind) {
 /** Counter top texture per world style. */
 export function topTex(style) {
   return canvasTex('top-' + style, 128, (g, s, r) => {
-    const base = { wood: 0xc08a52, ice: 0xdaf2fb, stone: 0x3b3537, panel: 0xe8eef4, marble: 0xfaf6ee, bamboo: 0xd8b46a, steel: 0xaab2ba, darkwood: 0x6a3e26 }[style] || 0xcccccc;
+    const base = { wood: 0xc08a52, ice: 0xdaf2fb, stone: 0x3b3537, panel: 0xe8eef4, marble: 0xfaf6ee, bamboo: 0xd8b46a, steel: 0xaab2ba, darkwood: 0x6a3e26, brass: 0xc89a52 }[style] || 0xcccccc;
     g.fillStyle = hex(base); g.fillRect(0, 0, s, s);
     if (style === 'wood' || style === 'darkwood' || style === 'bamboo') {
       g.strokeStyle = `rgba(60,30,10,${style === 'darkwood' ? 0.4 : 0.22})`;
@@ -176,6 +200,10 @@ export function topTex(style) {
     } else if (style === 'marble' || style === 'ice') {
       g.strokeStyle = style === 'ice' ? 'rgba(255,255,255,0.9)' : 'rgba(150,140,130,0.35)';
       for (let i = 0; i < 4; i++) { g.beginPath(); g.moveTo(r() * s, 0); g.bezierCurveTo(r() * s, 40, r() * s, 90, r() * s, s); g.stroke(); }
+    } else if (style === 'brass') {
+      const grd = g.createLinearGradient(0, 0, s, s); grd.addColorStop(0, 'rgba(255,240,200,0.45)'); grd.addColorStop(0.5, 'rgba(255,255,255,0)'); grd.addColorStop(1, 'rgba(255,230,180,0.3)');
+      g.fillStyle = grd; g.fillRect(0, 0, s, s);
+      g.fillStyle = '#7a5420'; for (const [x, y] of [[8, 8], [s - 8, 8], [8, s - 8], [s - 8, s - 8]]) { g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill(); }
     } else if (style === 'steel' || style === 'panel') {
       const grd = g.createLinearGradient(0, 0, s, s); grd.addColorStop(0, 'rgba(255,255,255,0.35)'); grd.addColorStop(0.5, 'rgba(255,255,255,0)'); grd.addColorStop(1, 'rgba(255,255,255,0.25)');
       g.fillStyle = grd; g.fillRect(0, 0, s, s);

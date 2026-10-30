@@ -81,13 +81,14 @@ export function buildFactory(g, L, W, H, r, updaters) {
   g.add(floor);
 
   // ---- mezzanine: a riveted steel deck under each zone, girders, columns and bracing
-  const zones = L ? L.zones : [{ x0: 0, x1: W - 1 }];
-  const wx = (x) => x - W / 2;
+  const zones = L ? L.zones : [{ x0: 0, x1: W - 1, y0: 0, y1: H - 1 }];
+  const wx = (x) => x - W / 2, tz = (y) => y - H / 2;
   const zf = H / 2, zb = -H / 2;
   const stripes = stripeTex('#ffc020', '#1a1a1a').clone(); stripes.needsUpdate = true;
   for (const z of zones) {
     const x0 = wx(z.x0), x1 = wx(z.x1 + 1), w = x1 - x0, cx = (x0 + x1) / 2;
-    g.add(part(box(), steelD, [cx, -0.85, 0], [w + 0.1, 0.3, H + 0.1]));
+    const zb = tz(z.y0), zf = tz(z.y1 + 1);
+    g.add(part(box(), steelD, [cx, -0.85, (zb + zf) / 2], [w + 0.1, 0.3, zf - zb + 0.1]));
     // perimeter girders
     ibeam(g, V(x0 - 0.05, -1.25, zf + 0.06), V(x1 + 0.05, -1.25, zf + 0.06), 0.5, 0.3, steel);
     ibeam(g, V(x0 - 0.05, -1.25, zb - 0.06), V(x1 + 0.05, -1.25, zb - 0.06), 0.5, 0.3, steel);
@@ -142,7 +143,11 @@ export function buildFactory(g, L, W, H, r, updaters) {
     });
     return grp;
   };
-  (L ? L.gaps : []).forEach((gp, i) => belt(V(wx(gp.x0) + (gp.x1 - gp.x0 + 1) / 2, 0, zb - 6), V(wx(gp.x0) + (gp.x1 - gp.x0 + 1) / 2, 0, zf + 8), FLOOR + 0.6, 1.1, 6, i % 2 ? 0.9 : 1.1));
+  (L ? L.gaps : []).forEach((gp, i) => {
+    if (gp.dir === 'y') { const z = tz(gp.y0) + (gp.y1 - gp.y0 + 1) / 2; belt(V(-W / 2 - 8, 0, z), V(W / 2 + 8, 0, z), FLOOR + 0.6, 1.1, 8, i % 2 ? 0.9 : 1.1); return; }
+    const x = wx(gp.x0) + (gp.x1 - gp.x0 + 1) / 2;
+    belt(V(x, 0, zb - 6), V(x, 0, zf + 8), FLOOR + 0.6, 1.1, 6, i % 2 ? 0.9 : 1.1);
+  });
   belt(V(-W / 2 - 12, 0, zf + 3.2), V(W / 2 + 12, 0, zf + 3.2), FLOOR + 0.6, 1.3, 10, 1.2);
   for (const s of [-1, 1]) belt(V(s * (W / 2 + 2.3), 0, s < 0 ? zb - 3 : zf + 4), V(s * (W / 2 + 2.3), 0, s < 0 ? zf + 4 : zb - 3), -0.9, 1.0, 5, 0.8);
 

@@ -26,7 +26,7 @@ export const WORLDS = [
       'Barnacle Bake', 'Surf-n-Surf', 'Captain\'s Platter', 'Kraken Pot Pie', 'Plunderer\'s Feast'],
   },
   {
-    id: 'glacier', name: 'Glacier', blurb: 'Slippery ice and drifting floes.',
+    id: 'glacier', name: 'Glacier', blurb: 'Glaciers, ice bridges and drifting floes.',
     outfit: 'parka', sky: 0xbfe3f5, fog: 0xd8eef8, floor: 'ice', wall: 'snowbrick', voidKind: 'arctic',
     ingredients: [
       { id: 'crysshrimp', name: 'Glacier Crystal-Shrimp', method: 'chop', shape: 'shrimp', c1: 0x9fe6ff, c2: 0xe9fbff, c3: 0x5ec6ef },
@@ -38,7 +38,7 @@ export const WORLDS = [
       'Ice-Corn Bake', 'Mammoth Stew Plate', 'Avalanche Platter', 'Snowdrift Gratin', 'Glacier Banquet'],
   },
   {
-    id: 'volcano', name: 'Volcanic Core', blurb: 'Fire walls, embers and magma geysers.',
+    id: 'volcano', name: 'Volcanic Core', blurb: 'Lava islands, fire walls and magma geysers.',
     outfit: 'heatsuit', sky: 0x3a1410, fog: 0x5a1f12, floor: 'basalt', wall: 'obsidian', voidKind: 'lava',
     ingredients: [
       { id: 'magmapepper', name: 'Magma-Pepper', method: 'chop', shape: 'pepper', c1: 0xff4a1a, c2: 0xffc23a, c3: 0x3d8a2a },
@@ -50,7 +50,7 @@ export const WORLDS = [
       'Roasted Ash-Root', 'Eruption Combo', 'Caldera Platter', 'Smoldering Hotpot', 'Core Meltdown Feast'],
   },
   {
-    id: 'space', name: 'Space Station', blurb: 'Laser grid doors and gravity failures.',
+    id: 'space', name: 'Space Station', blurb: 'Cramped modules, laser tubes and gravity failures.',
     outfit: 'spacesuit', sky: 0x070a1c, fog: 0x0b1030, floor: 'metalgrid', wall: 'hullpanel', voidKind: 'space',
     ingredients: [
       { id: 'astrobean', name: 'Astro-Bean', method: 'pot', shape: 'bean', c1: 0x5ad1a0, c2: 0xd8fff0, c3: 0x2a8a6a },
@@ -62,7 +62,7 @@ export const WORLDS = [
       'Vacuum Loaf', 'Comet Fondue Plate', 'Galaxy Sandwich', 'Bean & Bread Rations', 'Mission Control Feast'],
   },
   {
-    id: 'clouds', name: 'In the Clouds', blurb: 'Air gusts and lightning storms.',
+    id: 'clouds', name: 'In the Clouds', blurb: 'Kitchens on clouds, gusts and lightning.',
     outfit: 'aviator', sky: 0xa6c8ff, fog: 0xd6e4ff, floor: 'cloudtile', wall: 'marble', voidKind: 'sky',
     ingredients: [
       { id: 'sunlemon', name: 'Sun-Drop Lemon', method: 'chop', shape: 'lemon', c1: 0xffe14a, c2: 0xfff8c0, c3: 0xffb21a },
@@ -74,7 +74,7 @@ export const WORLDS = [
       'Roast Sky-Poultry', 'Stormfront Stir', 'Jet-Stream Platter', 'Thunderhead Roast', 'Stratosphere Feast'],
   },
   {
-    id: 'jungle', name: 'Jungle Treehouse', blurb: 'Swaying rope bridges and thieving monkeys.',
+    id: 'jungle', name: 'Jungle Treehouse', blurb: 'Treehouses round the great tree and thieving monkeys.',
     outfit: 'explorer', sky: 0x8fd18a, fog: 0x6fae6a, floor: 'bamboo', wall: 'trunk', voidKind: 'canopy',
     ingredients: [
       { id: 'vinemelon', name: 'Vine-Melon', method: 'chop', shape: 'melon', c1: 0x3f9a3a, c2: 0xff6a5a, c3: 0x2a6a2a },
@@ -86,7 +86,7 @@ export const WORLDS = [
       'Toasted Tree-Nut', 'Swamp Surprise', 'Expedition Platter', 'Nutty Mango Bake', 'Treetop Feast'],
   },
   {
-    id: 'factory', name: 'Factory', blurb: 'Conveyor belts and reroute levers.',
+    id: 'factory', name: 'Factory', blurb: 'Conveyor carts, belts and reroute levers.',
     outfit: 'welder', sky: 0x5a6470, fog: 0x6a7480, floor: 'steelplate', wall: 'brickfactory', voidKind: 'pit',
     ingredients: [
       { id: 'gearcorn', name: 'Gear-Corn', method: 'oven', shape: 'corn', c1: 0xc8a23a, c2: 0xffe08a, c3: 0x7a7a7a },
@@ -98,16 +98,16 @@ export const WORLDS = [
       'Gear-Corn Roast', 'Torque & Beans', 'Quality Control Combo', 'Heavy Metal Bake', 'Production Line Feast'],
   },
   {
-    id: 'library', name: 'Clockwork', blurb: 'Time dilation and The Cuckoo Trap.',
-    outfit: 'wizard', sky: 0x2a1f3a, fog: 0x3a2a4a, floor: 'parquet', wall: 'bookshelf', voidKind: 'abyss',
+    id: 'library', name: 'Clock Tower', blurb: 'Turning gears, time warps and the cuckoo.',
+    outfit: 'wizard', sky: 0x241810, fog: 0x3a2818, floor: 'clockfloor', wall: 'clockwall', voidKind: 'abyss',
     ingredients: [
-      { id: 'spellsugar', name: 'Spell-Sugar', method: 'chop', shape: 'crystal', c1: 0xff9ae0, c2: 0xffe0f6, c3: 0xc06ad9 },
-      { id: 'magicflour', name: 'Magic-Flour', method: 'oven', shape: 'sack', c1: 0xe8dcc0, c2: 0xffffff, c3: 0x8a6ad9 },
-      { id: 'stardustmelon', name: 'Star-Dust Melon', method: 'pan', shape: 'starmelon', c1: 0x2a3a8a, c2: 0xc8d8ff, c3: 0xffe14a },
+      { id: 'spellsugar', name: 'Tick-Tock Sugar', method: 'chop', shape: 'crystal', c1: 0xff9ae0, c2: 0xffe0f6, c3: 0xc06ad9 },
+      { id: 'magicflour', name: 'Clockwork Flour', method: 'oven', shape: 'sack', c1: 0xe8dcc0, c2: 0xffffff, c3: 0x8a6ad9 },
+      { id: 'stardustmelon', name: 'Midnight Melon', method: 'pan', shape: 'starmelon', c1: 0x2a3a8a, c2: 0xc8d8ff, c3: 0xffe14a },
       { id: 'chronocream', name: 'Chrono-Cream', method: 'pot', shape: 'cream', c1: 0xfff4e0, c2: 0xffffff, c3: 0xd9a84a },
     ],
-    dishes: ['Sugar Glyphs', 'Seared Star-Dust', 'Constellation Crumble', 'Chrono-Cream Custard', 'Sweet Hourglass',
-      'Enchanted Loaf', 'Midnight Melon Cream', 'Spellbook Sampler', 'Time-Warp Tart', 'Grand Grimoire Feast'],
+    dishes: ['Sugar Cogs', 'Seared Midnight Melon', 'Cog & Melon Crumble', 'Chrono-Cream Custard', 'Sweet Hourglass',
+      'Clockwork Loaf', 'Midnight Melon Cream', 'Pendulum Sampler', 'Time-Warp Tart', 'Grand Clocktower Feast'],
   },
 ];
 
@@ -147,7 +147,7 @@ export const OUTFITS = [
   { id: 'aviator', name: 'Aviator Gear', world: 4 },
   { id: 'explorer', name: 'Explorer Outfit', world: 5 },
   { id: 'welder', name: 'Welding Gear', world: 6 },
-  { id: 'wizard', name: 'Wizard Robes', world: 7 },
+  { id: 'wizard', name: 'Clockmaker Gear', world: 7 },
 ];
 export const COLORS = [0xe8553a, 0x3a8ae8, 0x4ab84a, 0xf2b52a, 0xa05ad8, 0x2ac0b8, 0xf27ab0, 0x5a5a6a];
 export const SLOT_COLORS = [0xff6a3d, 0x3d9bff, 0x5ad15a, 0xffcf3d];

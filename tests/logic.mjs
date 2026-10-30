@@ -3,7 +3,8 @@
 import { WORLDS, INGREDIENTS, T } from '../src/config.js';
 import { buildLevel, validate } from '../src/levels.js';
 import { Sim, movePlayer, starsFor, findTarget, starThresholds } from '../src/sim.js';
-import { moverX } from '../src/hazards.js';
+import { moverX, floeAt } from '../src/hazards.js';
+import { levelUnlocked, outfitUnlocked } from '../src/save.js';
 import { MP_LEVEL } from '../src/levels.js';
 import { envAt, deadlyCells } from '../src/hazards.js';
 
@@ -49,9 +50,9 @@ test('each world has its signature hazard', () => {
     const id = WORLDS[L.world].id;
     if (need[id]) assert(L.hz[need[id]], `${L.id} missing ${need[id]}`);
     if (id === 'factory') assert(L.belts.length && L.belts[0].lever, `${L.id} missing belts/lever`);
-    if (id === 'glacier') assert(L.floes.length, 'glacier floes');
   }
   assert(levels.some((L) => L.shifters.length) && levels.some((L) => L.bridges.some((b) => b.shifting)), 'shifting walls/bridges');
+  assert(levels.filter((L) => L.world === 1).some((L) => L.floes.length), 'glacier floes');
 });
 
 // --- cook every recipe through the rules ---
@@ -316,14 +317,81 @@ test('upgrades speed up chopping and running', () => {
   assert(Math.abs(a.vx) > Math.abs(q.vx) * 1.2, `upgraded run speed ${a.vx} vs ${q.vx}`);
 });
 
-test('jungle kitchens are treehouse pods joined by rope bridges', () => {
+test('jungle kitchens are three or four small pods round the tree, joined by rope bridges', () => {
   for (let li = 0; li <= 10; li++) {
     const L = buildLevel(5, li);
-    assert(L.zones.length >= 2, `5-${li}: ${L.zones.length} pods`);
-    assert(L.gaps.every((g) => g.x1 - g.x0 === 1), `5-${li}: gaps are two tiles wide`);
-    for (const g of L.gaps) assert(L.bridges.some((b) => b.rope && b.tiles[0][0] === g.x0), `5-${li}: every gap has a rope bridge`);
+    assert(L.zones.length >= 3 && L.zones.length <= 4, `5-${li}: ${L.zones.length} pods`);
+    for (const z of L.zones) assert(z.x1 - z.x0 <= 10 && z.y1 - z.y0 <= 6, `5-${li}: pod ${z.x1 - z.x0 + 1}x${z.y1 - z.y0 + 1} too big`);
+    assert(L.bridges.length && L.bridges.every((b) => b.rope), `5-${li}: rope bridges`);
+    assert(L.gaps.some((g) => g.dir === 'x') && L.gaps.some((g) => g.dir === 'y'), `5-${li}: pods side by side and front to back`);
   }
-  assert(buildLevel(5, 6).zones.length === 3 && buildLevel(5, 10).zones.length === 3, 'later and multiplayer treehouses have three pods');
+  assert(buildLevel(5, 6).zones.length === 4 && buildLevel(5, 10).zones.length === 4, 'later and multiplayer treehouses have four pods');
+});
+
+test('layouts vary: odd-shaped islands, stacked and L-shaped arrangements', () => {
+  const shapes = new Set(), counts = new Set();
+  for (const L of levels) {
+    counts.add(L.zones.length);
+    if (L.gaps.some((g) => g.dir === 'y')) shapes.add('stacked');
+    // a zone whose bounding box has void cells in it is not a plain rectangle
+    if (L.zones.some((z) => { for (let y = z.y0; y <= z.y1; y++) for (let x = z.x0; x <= z.x1; x++) if (L.tiles[y * L.W + x].k === 'void') return true; return false; })) shapes.add('odd');
+  }
+  assert(shapes.has('stacked') && shapes.has('odd'), [...shapes].join());
+  assert([1, 2, 3, 4, 6].every((n) => counts.has(n)), 'zone counts ' + [...counts]);
+  for (let w = 1; w < 8; w++) {
+    const sigs = new Set(levels.filter((L) => L.world === w).map((L) => `${L.zones.length}:${L.gaps.map((g) => g.dir).sort().join('')}`));
+    assert(sigs.size >= 3, `${WORLDS[w].id} has only ${sigs.size} kinds of layout`);
+  }
+  assert(levels.some((L) => L.tiles.some((t) => t.pit)), 'some levels have pits to fall into');
+});
+
+test('space station levels are tight compartments joined by tube corridors', () => {
+  for (let li = 0; li <= 9; li++) {
+    const L = buildLevel(3, li);
+    assert(L.zones.length >= 2, `3-${li}: compartments`);
+    for (const z of L.zones) assert(z.x1 - z.x0 <= 6 && z.y1 - z.y0 <= 5, `3-${li}: compartment ${z.x1 - z.x0 + 1}x${z.y1 - z.y0 + 1} is roomy`);
+    for (const b of L.bridges) assert(b.tiles.length >= 2, 'tubes are corridors, not doorways');
+  }
+});
+
+test('factory carts carry a cook across the gap on the conveyor', () => {
+  const L = levels.find((q) => q.world === 6 && q.floes.some((f) => f.cart));
+  assert(L, 'a factory level with carts');
+  const f = L.floes.find((q) => q.cart);
+  // wait at the left bank for the cart, step on, ride, step off on the right bank
+  let t = 0;
+  while (floeAt(f, t).x > f.x0 + 0.01 || floeAt(f, t + 0.5).x > f.x0 + 0.01) t += 0.05;
+  const p = { x: f.x0 - 0.5, y: f.y + 1, z: 0, vx: 0, vy: 0, vz: 0, fx: 1, fy: 0, ko: 0 };
+  const E = { ...L, hz: {} };
+  let fell = false, i = 0;
+  for (; i < 60 && !fell && p.x < f.x0 + 0.5; i++) { fell = movePlayer(E, p, { mx: 1, my: 0 }, 1 / 60, t) === 'fell' || p.falling; t += 1 / 60; }
+  for (i = 0; i < 20; i++) { movePlayer(E, p, { mx: 0, my: 0 }, 1 / 60, t); t += 1 / 60; }
+  assert(!fell && !p.falling && p.x > floeAt(f, t).x && p.x < floeAt(f, t).x + 1, 'stepped onto the cart ' + p.x);
+  for (i = 0; i < 60 * 12 && floeAt(f, t).x < f.x1 - 0.01; i++) { assert(!p.falling, 'fell off the cart at ' + p.x); movePlayer(E, p, { mx: 0, my: 0 }, 1 / 60, t); t += 1 / 60; }
+  assert(p.x > f.x1, 'carried across ' + p.x);
+  for (i = 0; i < 40; i++) { movePlayer(E, p, { mx: 1, my: 0 }, 1 / 60, t); t += 1 / 60; }
+  assert(!p.falling && p.x > f.x1 + 1, 'stepped off onto the far bank ' + p.x);
+});
+
+test('rope bridges running front to back sway cooks sideways', () => {
+  const L = buildLevel(5, 3);
+  const b = L.bridges.find((q) => q.dir === 'y');
+  assert(b, 'a front-to-back rope bridge');
+  const [x, y] = b.tiles[0];
+  const t = L.hz.sway.period / 4;
+  const p = { x: x + 0.5, y: y + 0.5, z: 0, vx: 0, vy: 0, vz: 0, fx: 0, fy: 1, ko: 0 };
+  movePlayer(L, p, { mx: 0, my: 0 }, 1 / 60, t);
+  assert(Math.abs(p.ex) > 0.5 && Math.abs(p.ey) < 1e-6, `pushed along x ${p.ex}, ${p.ey}`);
+});
+
+test('every world is open; the next level needs a star on the one before', () => {
+  globalThis.location = { search: '' };
+  const s = { stars: {}, best: {}, coins: 0, upg: {} };
+  for (let w = 0; w < 8; w++) assert(levelUnlocked(s, w, 0), `world ${w} level 1 open`);
+  assert(!levelUnlocked(s, 5, 1), 'level 2 locked before a star');
+  s.stars['5-0'] = 1;
+  assert(levelUnlocked(s, 5, 1) && !levelUnlocked(s, 5, 2), 'one star opens the next level only');
+  assert(outfitUnlocked(s, 'explorer') && !outfitUnlocked(s, 'pirate'), 'outfit from clearing the world\'s first level');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
