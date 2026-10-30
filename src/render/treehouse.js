@@ -86,6 +86,79 @@ if (fadeK < 0.02) discard;`)
   return m;
 }
 
+/** A liana: a chain of jointed segments with leaves, hanging from (x, y, z). Returns a handle for swayVines(). */
+export function vine(parent, x, y, z, len, rnd, m = vineMat(), leafM = vineLeafMat()) {
+  const n = Math.max(3, Math.round(len / 0.45)), sl = len / n;
+  const root = new THREE.Group();
+  root.position.set(x, y, z);
+  parent.add(root);
+  const joints = [];
+  let at = root;
+  for (let k = 0; k < n; k++) {
+    const j = new THREE.Group();
+    if (k) j.position.y = -sl;
+    at.add(j);
+    j.add(part(cyl(5), m, [0, -sl / 2, 0], [0.022 - k * 0.012 / n, sl + 0.02, 0.022 - k * 0.012 / n]));
+    if (rnd() < 0.75) {
+      const l = part(sph(6), leafM, [(rnd() - 0.5) * 0.06, -sl * rnd(), (rnd() - 0.5) * 0.06], [0.1, 0.03, 0.16], [rnd() * 0.8, rnd() * 6.28, rnd() * 0.8]);
+      j.add(l);
+    }
+    joints.push(j);
+    at = j;
+  }
+  return { joints, ph: rnd() * 6.28, sp: 0.7 + rnd() * 0.6, amp: 0.05 + rnd() * 0.04 };
+}
+let vm = null, vlm = null;
+const vineMat = () => vm || (vm = mat(0x3f7a2a, { rough: 0.8 }));
+const vineLeafMat = () => vlm || (vlm = mat(0x4aa83a, { rough: 0.8 }));
+
+/** Swing every liana: a travelling wave down each chain, so the tips swing most. */
+export function swayVines(list, t, gust = 0) {
+  for (const v of list) {
+    const a = v.amp * (1 + gust);
+    v.joints.forEach((j, k) => {
+      j.rotation.z = a * Math.sin(t * v.sp + v.ph - k * 0.45);
+      j.rotation.x = a * 0.6 * Math.sin(t * v.sp * 0.8 + v.ph * 1.7 - k * 0.4);
+    });
+  }
+}
+
+/** A twig: a thin curving branch from p0 heading along dir that forks once, leaves at every tip. */
+export function twig(parent, p0, dir, len, rnd, m = bark(), tints = ['#4a9a38', '#3f8f32', '#5aa840']) {
+  const d = dir.clone().normalize();
+  const side = V(-d.z, 0, d.x);
+  const mid = p0.clone().addScaledVector(d, len * 0.5).add(V(0, len * 0.12, 0)).addScaledVector(side, (rnd() - 0.5) * len * 0.3);
+  const tip = p0.clone().addScaledVector(d, len).add(V(0, len * (0.1 + rnd() * 0.25), 0));
+  parent.add(branch([p0, mid, tip], 0.07 + len * 0.02, 0.02, m, 10));
+  const tips = [tip];
+  for (const s of [-1, 1]) {
+    if (rnd() < 0.3) continue;
+    const fl = len * (0.35 + rnd() * 0.25);
+    const f = mid.clone().addScaledVector(side, s * fl).addScaledVector(d, fl * 0.5).add(V(0, fl * 0.3, 0));
+    parent.add(branch([mid, mid.clone().lerp(f, 0.5).add(V(0, 0.05, 0)), f], 0.04, 0.015, m, 6));
+    tips.push(f);
+  }
+  for (const q of tips) leafClump(parent, q.x, q.y, q.z, 7 + Math.floor(rnd() * 5), 0.55 + len * 0.08, rnd, tints[Math.floor(rnd() * tints.length)]);
+  return tips;
+}
+
+/** A slender jungle tree: a thin, slightly leaning trunk with tiers of small leafy branches and lianas. */
+export function jungleTree(parent, x, z, y0, h, rnd, vines) {
+  const lean = V((rnd() - 0.5) * 0.25, 1, (rnd() - 0.5) * 0.25).normalize();
+  const top = V(x, y0, z).addScaledVector(lean, h);
+  const r0 = 0.22 + rnd() * 0.12;
+  parent.add(branch([V(x, y0, z), V(x, y0, z).addScaledVector(lean, h * 0.5).add(V((rnd() - 0.5) * 0.4, 0, (rnd() - 0.5) * 0.4)), top], r0, r0 * 0.35, bark(), 16));
+  const tiers = 4 + Math.floor(rnd() * 3);
+  for (let k = 0; k < tiers; k++) {
+    const f = 0.4 + 0.6 * (k / (tiers - 1));
+    const p = V(x, y0, z).lerp(top, f);
+    const a = rnd() * 6.28 + k * 2.4;
+    const tips = twig(parent, p, V(Math.cos(a), 0.15, Math.sin(a)), 1.2 + rnd() * 1.4 * (1.2 - f), rnd);
+    if (vines && rnd() < 0.6) { const q = tips[0]; vines.push(vine(parent, q.x, q.y - 0.1, q.z, 1.5 + rnd() * 3.5, rnd)); }
+  }
+  leafClump(parent, top.x, top.y + 0.2, top.z, 16, 1.5, rnd, '#3f8f32');
+}
+
 export const treehouse = {
   makePods() {
     const L = this.L;
@@ -253,7 +326,7 @@ export const treehouse = {
   buildTree(rnd) {
     const tr = this.trunkAt;
     const map = barkTex().clone(); map.needsUpdate = true; map.repeat.set(4, 12);
-    const bm = fadingBark(map);
+    const bm = fadingBark(map, -0.9, -0.15);
     this.treeBark = bm;
     // the trunk: gnarled, flaring out into buttress roots far below, and fading out above the floor
     const geo = new THREE.CylinderGeometry(1, 1, 44, 40, 60, true);
@@ -275,20 +348,29 @@ export const treehouse = {
     // moss and a few bracket fungi on the trunk where it is still solid
     const moss = mat(0x4f8a34, { rough: 0.9 }), fungus = mat(0xd8b878, { rough: 0.7 });
     for (let k = 0; k < 7; k++) {
-      const a = rnd() * 6.28, y = -0.4 - rnd() * 5;
+      const a = rnd() * 6.28, y = -2.2 - rnd() * 5;
       this.root.add(part(sph(10), moss, [tr.x + Math.cos(a) * 1.28, y, tr.z + Math.sin(a) * 1.28], [0.35, 0.5, 0.35], [0, -a, 0]));
       if (k % 2) this.root.add(part(cyl(14, 0.5), fungus, [tr.x + Math.cos(a + 1) * 1.36, y - 0.6, tr.z + Math.sin(a + 1) * 1.36], [0.26, 0.05, 0.26]));
     }
-    // limbs leaving the trunk above the kitchen, up to the canopy (they fade with the trunk)
-    for (const [ang, h] of [[2.3, 2.2], [0.7, 3.2], [-1.9, 2.8], [-0.4, 4.2]]) {
-      const d = V(Math.cos(ang), 0, Math.sin(ang) * 0.6 - 0.8).normalize();
-      this.root.add(branch([V(tr.x, h - 1, tr.z), V(tr.x + d.x * 1.6, h + 0.4, tr.z + d.z * 1.6), V(tr.x + d.x * 3.6, h + 2.4, tr.z + d.z * 3.6 - 1)], 0.55, 0.25, bm));
+    // the trunk ends in a burst of leafy twigs just under the decks
+    for (let k = 0; k < 6; k++) {
+      const a = k * 1.05 + rnd() * 0.4;
+      twig(this.root, V(tr.x + Math.cos(a) * 0.5, -1.0, tr.z + Math.sin(a) * 0.5), V(Math.cos(a), 0.5, Math.sin(a)), 0.9 + rnd() * 0.5, rnd);
+    }
+    // small leafy branches sprouting all round the trunk below the decks, with lianas hanging off them
+    this.vines = [];
+    for (let k = 0; k < 14; k++) {
+      const a = k * 2.39 + rnd() * 0.5, y = -1.3 - (k % 7) * 0.85 - rnd() * 0.4;
+      const p = V(tr.x + Math.cos(a) * 1.2, y, tr.z + Math.sin(a) * 1.2);
+      const tips = twig(this.root, p, V(Math.cos(a), 0.25, Math.sin(a)), 1.0 + rnd() * 1.3, rnd);
+      if (k % 2 === 0) { const q = tips[tips.length - 1]; this.vines.push(vine(this.root, q.x, q.y, q.z, 1.2 + rnd() * 2.5, rnd)); }
     }
     // the crown: dense leaves high at the back and sides of the view
     const zb = this.wz(0);
     for (let i = 0; i < 12; i++) {
       const sx = (i / 11 - 0.5) * (this.L.W + 6);
       leafClump(this.root, sx + (rnd() - 0.5) * 2, 4.8 + rnd() * 2.5, zb - 2.5 - rnd() * 3, 22, 2.4, rnd, ['#3f8f32', '#4a9a38', '#357a2a'][i % 3]);
+      if (i % 2) this.vines.push(vine(this.root, sx + (rnd() - 0.5) * 2, 5.2, zb - 2.2 - rnd(), 2.5 + rnd() * 2.5, rnd));
     }
     for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) leafClump(this.root, sx * (this.L.W / 2 + 2.2 + rnd()), 2.5 + rnd() * 3, zb + k * this.L.H / 3, 18, 2, rnd, '#3f8f32');
   },
@@ -319,8 +401,13 @@ export const treehouse = {
       // ---- the branch it sits on: out of the trunk, under the platform, its tip curling up past it
       const dx = cx - tr.x, dz = cz - tr.z, dl = Math.hypot(dx, dz) || 1, ux = dx / dl, uz = dz / dl;
       const far = Math.min(w, zf - zb) * 0.5 + 0.8;
-      g.add(branch([V(tr.x + ux * 0.8, -2.6, tr.z + uz * 0.8), V(tr.x + ux * 1.9, -1.8, tr.z + uz * 1.9), V(cx, -1.35, cz), V(cx + ux * far, -1.15, cz + uz * far), V(cx + ux * (far + 1.2), -0.4, cz + uz * (far + 1.2))], 0.62, 0.12, branchM, 32));
-      leafClump(g, cx + ux * (far + 1.3), -0.2, cz + uz * (far + 1.3), 12, 1.0, rnd, '#4a9a38');
+      g.add(branch([V(tr.x + ux * 0.8, -2.6, tr.z + uz * 0.8), V(tr.x + ux * 1.9, -1.8, tr.z + uz * 1.9), V(cx, -1.35, cz), V(cx + ux * far, -1.15, cz + uz * far), V(cx + ux * (far + 1.2), -0.75, cz + uz * (far + 1.2))], 0.38, 0.06, branchM, 32));
+      leafClump(g, cx + ux * (far + 1.3), -0.6, cz + uz * (far + 1.3), 12, 1.0, rnd, '#4a9a38');
+      // a few leafy twigs off that branch, poking out from under the deck
+      for (let k = 0; k < 3; k++) {
+        const f = 0.35 + k * 0.2, a = Math.atan2(uz, ux) + (k % 2 ? 1 : -1) * (0.9 + rnd() * 0.5);
+        twig(g, V(tr.x + (cx - tr.x) * f, -1.5, tr.z + (cz - tr.z) * f), V(Math.cos(a), 0.1, Math.sin(a)), 1.2 + rnd() * 0.8, rnd, branchM);
+      }
       // struts from the platform corners down onto the branch
       for (const [sx, sz] of [[x0 + 0.4, zf - 0.3], [x1 - 0.4, zf - 0.3], [x0 + 0.4, zb + 0.4], [x1 - 0.4, zb + 0.4]]) log(g, V(sx, -0.95, sz), V(cx + (sx - cx) * 0.2, -1.55, cz + (sz - cz) * 0.2), 0.085);
       if (z.wall) {
@@ -336,7 +423,7 @@ export const treehouse = {
           // fringe of straw + the odd vine trailing off the eaves
           const l = 0.12 + rnd() * 0.12;
           g.add(part(box(), mat(0xb89448, { rough: 1 }), [x, front.y - 0.05 - l / 2, front.z + 0.06], [0.22, l, 0.03], [0.1, 0, (rnd() - 0.5) * 0.3]));
-          if (rnd() < 0.35) { const vl = 0.4 + rnd() * 0.7; g.add(part(cyl(5), vineM, [x, front.y - vl / 2, front.z + 0.1], [0.018, vl, 0.018])); g.add(part(sph(6), mat(0x4aa83a, { rough: 0.8 }), [x, front.y - vl, front.z + 0.1], [0.07, 0.04, 0.09])); }
+          if (rnd() < 0.35) this.vines.push(vine(g, x, front.y, front.z + 0.1, 0.5 + rnd() * 0.7, rnd, vineM));
         }
         leafClump(g, x0 - 0.2, back.y + 0.15, back.z + 0.2, 7, 0.8, rnd, '#4a9a38');
         leafClump(g, x1 + 0.2, back.y + 0.1, back.z + 0.3, 7, 0.8, rnd, '#357a2a');
@@ -365,12 +452,10 @@ export const treehouse = {
         g.add(lg);
         this.lanterns.push({ lg, glow, ph: rnd() * 6 });
       }
-      // ---- vines dangling from under the platform into the depths
-      for (let k = 0; k < 4; k++) {
+      // ---- lianas dangling from under the platform into the depths, swinging
+      for (let k = 0; k < 5; k++) {
         const vx = x0 + rnd() * w, vz = rnd() < 0.5 ? zf + 0.1 : zb + rnd() * (zf - zb);
-        const vl = 1.5 + rnd() * 3;
-        g.add(part(cyl(5), vineM, [vx, -0.7 - vl / 2, vz], [0.025, vl, 0.025]));
-        for (let j = 0; j < 3; j++) g.add(part(sph(6), mat(0x4aa83a, { rough: 0.8 }), [vx + (rnd() - 0.5) * 0.1, -0.8 - rnd() * vl, vz], [0.09, 0.05, 0.12], [0, rnd() * 3, 0]));
+        this.vines.push(vine(g, vx, -0.7, vz, 1.5 + rnd() * 3, rnd, vineM));
       }
       leafClump(g, x0 - 0.3, -0.5, zf + 0.1, 8, 0.75, rnd, '#4a9a38');
       leafClump(g, x1 + 0.3, -0.6, zb + 0.4, 8, 0.75, rnd, '#3f8f32');
@@ -378,6 +463,7 @@ export const treehouse = {
   },
 
   updateTreehouse(rt) {
+    swayVines(this.vines || [], rt, Math.abs(this.bridgeSide || 0) * 6);
     for (const l of this.lanterns || []) {
       l.lg.rotation.z = Math.sin(rt * 1.6 + l.ph) * 0.06;
       l.glow.material.opacity = 0.5 + Math.sin(rt * 7 + l.ph) * 0.05;

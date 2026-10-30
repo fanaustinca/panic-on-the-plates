@@ -354,23 +354,46 @@ test('space station levels are tight compartments joined by tube corridors', () 
   }
 });
 
-test('factory carts carry a cook across the gap on the conveyor', () => {
-  const L = levels.find((q) => q.world === 6 && q.floes.some((f) => f.cart));
-  assert(L, 'a factory level with carts');
-  const f = L.floes.find((q) => q.cart);
-  // wait at the left bank for the cart, step on, ride, step off on the right bank
-  let t = 0;
-  while (floeAt(f, t).x > f.x0 + 0.01 || floeAt(f, t + 0.5).x > f.x0 + 0.01) t += 0.05;
-  const p = { x: f.x0 - 0.5, y: f.y + 1, z: 0, vx: 0, vy: 0, vz: 0, fx: 1, fy: 0, ko: 0 };
+test('factory walkway conveyors carry a cook both ways between sections', () => {
+  const L = levels.find((q) => q.world === 6 && q.tiles.some((t) => t.walkway));
+  assert(L, 'a factory level with walkways');
   const E = { ...L, hz: {} };
-  let fell = false, i = 0;
-  for (; i < 60 && !fell && p.x < f.x0 + 0.5; i++) { fell = movePlayer(E, p, { mx: 1, my: 0 }, 1 / 60, t) === 'fell' || p.falling; t += 1 / 60; }
-  for (i = 0; i < 20; i++) { movePlayer(E, p, { mx: 0, my: 0 }, 1 / 60, t); t += 1 / 60; }
-  assert(!fell && !p.falling && p.x > floeAt(f, t).x && p.x < floeAt(f, t).x + 1, 'stepped onto the cart ' + p.x);
-  for (i = 0; i < 60 * 12 && floeAt(f, t).x < f.x1 - 0.01; i++) { assert(!p.falling, 'fell off the cart at ' + p.x); movePlayer(E, p, { mx: 0, my: 0 }, 1 / 60, t); t += 1 / 60; }
-  assert(p.x > f.x1, 'carried across ' + p.x);
-  for (i = 0; i < 40; i++) { movePlayer(E, p, { mx: 1, my: 0 }, 1 / 60, t); t += 1 / 60; }
-  assert(!p.falling && p.x > f.x1 + 1, 'stepped off onto the far bank ' + p.x);
+  for (const d of [1, -1]) {
+    const lane = L.tiles.filter((t) => t.walkway && Math.sign(t.push) === d).sort((a, b) => a.x - b.x);
+    assert(lane.length >= 2, 'a lane each way');
+    const start = d > 0 ? lane[0] : lane[lane.length - 1];
+    // step onto the lane from the bank, then stand still: the belt does the rest
+    const p = { x: start.x + 0.5 - d * 1.0, y: start.y + 0.5, z: 0, vx: 0, vy: 0, vz: 0, fx: d, fy: 0, ko: 0 };
+    let t = 0;
+    for (let i = 0; i < 20; i++) { movePlayer(E, p, { mx: d, my: 0 }, 1 / 60, t); t += 1 / 60; }
+    for (let i = 0; i < 60 * 4; i++) { movePlayer(E, p, { mx: 0, my: 0 }, 1 / 60, t); t += 1 / 60; assert(!p.falling, 'fell off the walkway at ' + p.x); }
+    const end = d > 0 ? lane[lane.length - 1].x + 1 : lane[0].x;
+    assert(d > 0 ? p.x > end : p.x < end, `carried across (${d}) ${p.x}`);
+    assert(!p.falling, 'landed on the far bank');
+  }
+});
+
+test('belt items glide continuously and queue up behind each other', () => {
+  const L = buildLevel(6, 2);
+  const b = L.belts[0];
+  assert(b && b.tiles.length >= 3, 'a belt');
+  const sim = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }], 1);
+  const item = (n) => ({ kind: 'ing', ing: L.recipes[0].ings[0], s: 'raw', p: 0, n });
+  const [ax, ay] = b.tiles[0], [bx, by] = b.tiles[1];
+  sim.st(ax, ay).item = item(1); sim.st(bx, by).item = item(2);
+  const end = b.tiles.length - 1;
+  let prev = -1, jumps = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    sim.step(1 / 60);
+    // position of item 2 along the belt, in tiles
+    const k = b.tiles.findIndex(([x, y]) => sim.st(x, y).item && sim.st(x, y).item.n === 2);
+    const pos = k + (sim.st(...b.tiles[k]).bo || 0);
+    if (prev >= 0 && Math.abs(pos - prev) > 0.1) jumps++;
+    prev = pos;
+  }
+  assert(jumps === 0, 'no tile-to-tile hops');
+  assert(sim.st(...b.tiles[end]).item?.n === 2 && Math.abs(sim.st(...b.tiles[end]).bo) < 1e-6, 'leader settles at the end');
+  assert(sim.st(...b.tiles[end - 1]).item?.n === 1 && Math.abs(sim.st(...b.tiles[end - 1]).bo) < 1e-6, 'follower settles on the second-to-last tile');
 });
 
 test('rope bridges running front to back sway cooks sideways', () => {

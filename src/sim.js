@@ -269,7 +269,7 @@ export class Sim {
           this.emit('grab', { pid, x, y });
           return;
         }
-        if (!s.item) { s.item = H; p.held = null; s.bt = 0; this.emit('drop', { pid, x, y }); return; }
+        if (!s.item) { s.item = H; p.held = null; s.bo = 0; this.emit('drop', { pid, x, y }); return; }
         this.tryCombine(p, s, x, y);
     }
   }
@@ -457,21 +457,21 @@ export class Sim {
       }
     }
 
-    // conveyor belts
+    // conveyor belts: items glide continuously (s.bo = offset from the tile centre along the belt, in tiles)
+    // and keep going until the tile ahead is taken or the belt ends, then settle on their tile's centre
     L.belts.forEach((b, bi) => {
-      const dir = this.beltDir[bi];
+      const dir = this.beltDir[bi], v = dt * b.speed * scale;
       const order = dir > 0 ? b.tiles.slice().reverse() : b.tiles.slice(); // move the leading item first
       for (const [x, y] of order) {
         const s = this.st(x, y);
-        if (!s.item || s.fire) continue;
+        if (!s.item) { s.bo = 0; continue; }
+        if (s.fire) continue;
         const i = this.tile(x, y).beltI + dir;
-        if (i < 0 || i >= b.tiles.length) { s.bt = 0; continue; }
-        s.bt = (s.bt || 0) + dt * b.speed * scale;
-        if (s.bt >= 1) {
-          const [nx, ny] = b.tiles[i];
-          const ns = this.st(nx, ny);
-          if (!ns.item && !ns.fire) { ns.item = s.item; ns.bt = 0; s.item = null; s.bt = 0; } else s.bt = 1;
-        }
+        const ns = i >= 0 && i < b.tiles.length ? this.st(...b.tiles[i]) : null;
+        const open = ns && !ns.item && !ns.fire;
+        let bo = (s.bo || 0) * dir; // progress toward the next tile
+        bo = open ? bo + v : bo > 0 ? Math.max(0, bo - v) : Math.min(0, bo + v);
+        if (open && bo >= 0.5) { ns.item = s.item; ns.bo = (bo - 1) * dir; s.item = null; s.bo = 0; } else s.bo = bo * dir;
       }
     });
 
@@ -664,7 +664,7 @@ export class Sim {
 
   snapshot() {
     const ts = [];
-    this.ts.forEach((s, i) => { if (s.item || s.fire || s.dirty || s.clean || s.wp) ts.push([i, s.item || 0, +(s.fire || 0).toFixed(2), s.dirty || 0, s.clean || 0, +(s.wp || 0).toFixed(2)]); });
+    this.ts.forEach((s, i) => { if (s.item || s.fire || s.dirty || s.clean || s.wp) ts.push([i, s.item || 0, +(s.fire || 0).toFixed(2), s.dirty || 0, s.clean || 0, +(s.wp || 0).toFixed(2), +(s.bo || 0).toFixed(3)]); });
     return {
       t: +this.t.toFixed(3), ph: this.phase, sc: this.score, dl: this.delivered, fl: this.failed, tp: this.tips, cb: this.combo,
       o: this.orders.map((o) => [o.id, o.r, +o.t0.toFixed(2), o.lim]),
@@ -680,8 +680,8 @@ export class Sim {
   applySnapshot(S, selfId) {
     this.t = S.t; this.phase = S.ph; this.score = S.sc; this.delivered = S.dl; this.failed = S.fl; this.tips = S.tp; this.combo = S.cb;
     this.orders = S.o.map(([id, r, t0, lim]) => ({ id, r, t0, lim }));
-    for (const s of this.ts) { s.item = null; s.fire = 0; s.dirty = 0; s.clean = 0; s.wp = 0; }
-    for (const [i, item, fire, dirty, clean, wp] of S.ts) Object.assign(this.ts[i], { item: item || null, fire, dirty, clean, wp });
+    for (const s of this.ts) { s.item = null; s.fire = 0; s.dirty = 0; s.clean = 0; s.wp = 0; s.bo = 0; }
+    for (const [i, item, fire, dirty, clean, wp, bo] of S.ts) Object.assign(this.ts[i], { item: item || null, fire, dirty, clean, wp, bo: bo || 0 });
     if (S.mv) S.mv.forEach((it, i) => { if (this.mv[i]) this.mv[i].item = it || null; });
     for (const sp of S.p) {
       const p = this.player(sp.id);

@@ -23,6 +23,7 @@ export const levelTitle = (wi, li) => (li === MP_LEVEL ? MP_TITLES[wi] : TITLES[
 export const levelKey = (wi, li) => `${wi}-${li}`;
 
 const SOLID = new Set(['counter']); // blocks movement (walls handled separately)
+const WALKWAY = 1.35; // walkway conveyor carry speed (x 1.7 tiles/s)
 export const isCounter = (t) => t && t.k === 'counter';
 export const isBlocking = (t) => !t || t.k === 'counter' || t.k === 'wall';
 
@@ -92,11 +93,14 @@ function tryBuild(wi, liIn, seed) {
       gaps.push({ dir: 'x', a: ln.a, b: ln.b, x0: gx0, x1: gx1, y0: rows[0], y1: rows[rows.length - 1] });
       const gw = gx1 - gx0 + 1;
       if (wi === 6 && gw >= 2 && rows.length >= 2) {
-        // factory: a cart rides a conveyor back and forth across the gap
+        // factory: a pair of walkway conveyors across the gap, one each way: step on and it carries you
         const y = r.pick(rows.slice(0, -1).filter((q) => rows.includes(q + 1))) ?? null;
         if (y == null) return null;
-        for (const yy of [y, y + 1]) { set(A.x1, yy, 'floor'); set(B.x0, yy, 'floor'); }
-        floes.push({ axis: 'x', x0: gx0, x1: gx1, y, w: 1, h: 2, period: 8 + gw * 0.8, phase: r(), dwell: 0.32, cart: true });
+        const d0 = r.chance(0.5) ? 1 : -1;
+        for (const [yy, d] of [[y, d0], [y + 1, -d0]]) {
+          set(A.x1, yy, 'floor'); set(B.x0, yy, 'floor');
+          for (let x = gx0; x <= gx1; x++) set(x, yy, 'floor', { push: d * WALKWAY, walkway: true });
+        }
         continue;
       }
       if (wi === 1 && li >= 3 && rows.length >= 3 && r.chance(0.7)) {
@@ -277,7 +281,7 @@ function tryBuild(wi, liIn, seed) {
     if (li >= 5) {
       // floor conveyors along one interior row push cooks around
       const fy = r.int(3, H - 3);
-      for (const t of tiles) if (t.y === fy && t.k === 'floor' && !t.wallShift && !t.track) t.push = (li % 2 ? 1 : -1);
+      for (const t of tiles) if (t.y === fy && t.k === 'floor' && !t.wallShift && !t.track && !t.walkway) t.push = (li % 2 ? 1 : -1);
     }
   }
 

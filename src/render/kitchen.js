@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { T, INGREDIENTS, WORLDS } from '../config.js';
 import { tileAt } from '../levels.js';
-import { floeAt, floeMoving, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
+import { floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
 import { floorTex, wallTex, topTex, stripeTex, beltTex, glowTex, textTex, shade, cabinetTex } from './textures.js';
 import { Particles } from './particles.js';
 import { makeLava } from './lava.js';
@@ -89,7 +89,7 @@ export class Kitchen {
     };
     const B = new THREE.BoxGeometry(1, 1, 1);
     // floor slabs (counters sit on slabs too, so islands read as solid platforms)
-    const slabs = L.tiles.filter((t) => t.k === 'floor' || (t.k === 'counter' && !t.overVoid) || t.k === 'wall');
+    const slabs = L.tiles.filter((t) => (t.k === 'floor' && !t.walkway) || (t.k === 'counter' && !t.overVoid) || t.k === 'wall');
     this.slabTop = inst(B, floorM, slabs, (o, t) => { o.position.set(this.cx(t.x), -0.15, this.cz(t.y)); o.scale.set(1, 0.3, 1); });
     this.slabBot = inst(B, mat(shade(S.side, -0.35), { rough: 0.8 }), slabs, (o, t) => { o.position.set(this.cx(t.x), -0.55, this.cz(t.y)); o.scale.set(0.98, 0.5, 0.98); });
     this.slabIdx = new Map(slabs.map((t, i) => [t.y * L.W + t.x, i]));
@@ -100,7 +100,8 @@ export class Kitchen {
     // walls
     inst(B, wallM, walls, (o, t) => { o.position.set(this.cx(t.x), 1.25, this.cz(t.y)); o.scale.set(1, 2.5, 1); });
     inst(B, trimM, walls, (o, t) => { o.position.set(this.cx(t.x), 2.55, this.cz(t.y)); o.scale.set(1.02, 0.12, 1.04); });
-    for (const t of floors) if (t.push) this.addPushBelt(t);
+    for (const t of floors) if (t.push && !t.walkway) this.addPushBelt(t);
+    this.buildWalkways();
     for (const t of L.tiles) if (t.k === 'counter') this.buildStation(t, sideM, topM);
     this.buildBridges();
     this.buildFloes();
@@ -393,33 +394,44 @@ export class Kitchen {
     for (const sz of [-1, 1]) tg.add(part(box(), hull.glow, [0, cy + 0.32, sz * (R - 0.08)], [0.9, 0.03, 0.03]));
   }
 
+  /** Factory: walk-on conveyors spanning the gaps between sections (one lane each way). */
+  buildWalkways() {
+    const lanes = new Map();
+    for (const t of this.L.tiles) if (t.walkway) { const k = t.y; (lanes.get(k) || lanes.set(k, []).get(k)).push(t); }
+    const runs = [];
+    for (const row of lanes.values()) {
+      row.sort((a, b) => a.x - b.x);
+      let cur = [];
+      for (const t of row) { if (cur.length && t.x !== cur[cur.length - 1].x + 1) { runs.push(cur); cur = []; } cur.push(t); }
+      if (cur.length) runs.push(cur);
+    }
+    const yellow = mat(0xffb81a, { rough: 0.5, metal: 0.2 }), frame = mat(0x3a4048, { metal: 0.6, rough: 0.4 }), roller = mat(0x8a929a, { metal: 0.8, rough: 0.3 });
+    for (const run of runs) {
+      const t0 = run[0], len = run.length + 0.5, d = Math.sign(t0.push);
+      const xc = this.wx(t0.x) + run.length / 2, zc = this.cz(t0.y);
+      const g = new THREE.Group();
+      g.position.set(xc, 0, zc);
+      this.home(t0.x, t0.y).add(g);
+      const tex = beltTex().clone(); tex.needsUpdate = true;
+      tex.center.set(0.5, 0.5); tex.rotation = d > 0 ? 0 : Math.PI; tex.repeat.set(len, 1);
+      g.add(part(new THREE.PlaneGeometry(len, 0.86), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }), [0, 0.01, 0], 1, [-Math.PI / 2, 0, 0]));
+      g.add(part(box(), frame, [0, -0.14, 0], [len, 0.28, 0.94]));
+      for (const sz of [-1, 1]) g.add(part(box(), yellow, [0, 0.03, sz * 0.47], [len, 0.07, 0.06]));
+      for (let k = 0; k <= Math.round(len); k++) g.add(part(cyl(10), roller, [-len / 2 + k, -0.18, 0], [0.12, 0.96, 0.12], [Math.PI / 2, 0, 0]));
+      // direction chevrons painted on the side frames
+      const arrowM = new THREE.MeshBasicMaterial({ color: 0x40ff70 });
+      for (let k = 0; k < run.length; k++) for (const sz of [-1, 1]) {
+        const a = part(new THREE.ConeGeometry(0.07, 0.16, 3), arrowM, [-run.length / 2 + k + 0.5, -0.1, sz * 0.475], 1, [0, 0, -d * Math.PI / 2]);
+        g.add(a);
+      }
+      for (const sx of [-len / 2 + 0.3, len / 2 - 0.3]) g.add(part(box(), frame, [sx, -2.4, 0], [0.18, 4, 0.18]));
+      this.fx.push({ belt: tex, speed: Math.abs(t0.push) * 1.7 });
+    }
+  }
+
   buildFloes() {
     this.floeMeshes = this.L.floes.map((f) => {
       const g = new THREE.Group();
-      if (f.cart) {
-        // factory shuttle: a cart riding a conveyor belt across the gap
-        g.add(part(box(), mat(0x4a525c, { metal: 0.7, rough: 0.35 }), [f.w / 2, -0.07, f.h / 2], [f.w - 0.06, 0.14, f.h - 0.06]));
-        g.add(part(new THREE.PlaneGeometry(f.w - 0.12, f.h - 0.12), new THREE.MeshStandardMaterial({ map: floorTex('steelplate'), roughness: 0.5, metalness: 0.5 }), [f.w / 2, 0.004, f.h / 2], 1, [-Math.PI / 2, 0, 0]));
-        for (const sz of [0.05, f.h - 0.05]) g.add(part(new THREE.PlaneGeometry(f.w - 0.06, 0.1), new THREE.MeshBasicMaterial({ map: stripeTex() }), [f.w / 2, 0.006, sz], 1, [-Math.PI / 2, 0, 0]));
-        const lights = [];
-        for (const [sx, sz] of [[0.08, 0.08], [f.w - 0.08, f.h - 0.08]]) {
-          const l = part(sph(10), new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8000, emissiveIntensity: 0.1 }), [sx, 0.06, sz], 0.05);
-          g.add(l); lights.push(l);
-        }
-        g.add(part(box(), mat(0x2a2e34, { metal: 0.6 }), [f.w / 2, -0.24, f.h / 2], [f.w * 0.7, 0.2, f.h * 0.8]));
-        this.root.add(g);
-        // the conveyor it rides on: a belt the whole width of the gap, rollers and side frames
-        const len = f.x1 - f.x0 + f.w, x0 = this.wx(f.x0), zc = this.wz(f.y) + f.h / 2;
-        const tex = beltTex().clone(); tex.needsUpdate = true; tex.repeat.set(len, 1);
-        const belt = part(new THREE.PlaneGeometry(len + 0.3, f.h - 0.2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }), [x0 + len / 2, -0.35, zc], 1, [-Math.PI / 2, 0, 0]);
-        this.root.add(belt);
-        for (const sz of [-1, 1]) {
-          this.root.add(part(box(), mat(0xffb81a, { rough: 0.5, metal: 0.2 }), [x0 + len / 2, -0.36, zc + sz * (f.h / 2 - 0.05)], [len + 0.4, 0.18, 0.08]));
-          for (let k = 0; k <= len; k++) this.root.add(part(cyl(10), mat(0x8a929a, { metal: 0.8, rough: 0.3 }), [x0 + k, -0.42, zc], [0.08, f.h - 0.25, 0.08], [Math.PI / 2, 0, 0]));
-        }
-        for (const sx of [x0 + 0.3, x0 + len - 0.3]) this.root.add(part(box(), mat(0x3a4048, { metal: 0.6 }), [sx, -2.4, zc], [0.2, 4, 0.2]));
-        return { f, g, lights, tex };
-      }
       const top = part(box(), new THREE.MeshStandardMaterial({ map: floorTex('ice'), roughness: 0.15 }), [f.w / 2, -0.12, f.h / 2], [f.w - 0.06, 0.24, f.h - 0.06]);
       g.add(top);
       g.add(part(dode(), mat(0xbfe6f6, { rough: 0.3, flat: true }), [f.w / 2, -0.55, f.h / 2], [f.w * 0.55, 0.45, f.h * 0.55]));
@@ -639,8 +651,15 @@ export class Kitchen {
           this.home(tl.x, tl.y).add(mesh);
         }
         const base = tl.st === 'oven' ? 1.15 : tl.st === 'trash' ? 0.9 : CH + (ITEM_Y[tl.st] || 0);
-        const bt = tl.belt != null ? Math.min(1, s.bt || 0) : 0;
         e.mesh.position.set(this.cx(tl.x), base, this.cz(tl.y));
+        if (tl.belt != null) {
+          // glide along the belt (eased so a guest's 20 Hz snapshots still read as continuous motion)
+          const bt = L.belts[tl.belt].tiles, a = bt[0], b = bt[bt.length - 1], n = Math.max(1, bt.length - 1);
+          const want = s.bo || 0;
+          e.bo = e.bo == null ? want : e.bo + (want - e.bo) * Math.min(1, dt * 30);
+          e.mesh.position.x += e.bo * (b[0] - a[0]) / n;
+          e.mesh.position.z += e.bo * (b[1] - a[1]) / n;
+        }
         if (tl.st === 'pan' || tl.st === 'pot') e.mesh.position.y += Math.sin(rt * 9 + i) * 0.006;
         e.mesh.rotation.y = tl.st === 'board' ? 0.3 : 0;
         // chopping in progress: the whole ingredient shrinks while a pile of pieces grows beside it
@@ -700,18 +719,11 @@ export class Kitchen {
     // belts scroll
     for (const f of this.fx) {
       if (f.beltIdx != null) f.belt.offset.x -= dt * L.belts[f.beltIdx].speed * (sim.beltDir[f.beltIdx] || 1);
-      else if (f.belt) f.belt.offset.x -= dt * 1.7;
+      else if (f.belt) f.belt.offset.x -= dt * (f.speed || 1.7);
     }
     // floes, bridges, shifting walls
-    for (const { f, g, lights, tex } of this.floeMeshes) {
+    for (const { f, g } of this.floeMeshes) {
       const r = floeAt(f, play);
-      if (f.cart) {
-        g.position.set(this.wx(r.x), 0, this.wz(r.y));
-        tex.offset.x -= r.vx * dt;
-        const blink = floeMoving(f, play) && Math.sin(rt * 12) > 0;
-        lights.forEach((l) => { l.material.emissiveIntensity = blink ? 3 : 0.2; });
-        continue;
-      }
       g.position.set(this.wx(r.x), Math.sin(rt * 1.4 + f.phase * 6) * 0.03, this.wz(r.y));
       g.rotation.z = Math.sin(rt * 0.9 + f.phase * 4) * 0.02;
     }

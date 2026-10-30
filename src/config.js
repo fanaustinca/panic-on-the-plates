@@ -86,7 +86,7 @@ export const WORLDS = [
       'Toasted Tree-Nut', 'Swamp Surprise', 'Expedition Platter', 'Nutty Mango Bake', 'Treetop Feast'],
   },
   {
-    id: 'factory', name: 'Factory', blurb: 'Conveyor carts, belts and reroute levers.',
+    id: 'factory', name: 'Factory', blurb: 'Walkway conveyors, belts and reroute levers.',
     outfit: 'welder', sky: 0x5a6470, fog: 0x6a7480, floor: 'steelplate', wall: 'brickfactory', voidKind: 'pit',
     ingredients: [
       { id: 'gearcorn', name: 'Gear-Corn', method: 'oven', shape: 'corn', c1: 0xc8a23a, c2: 0xffe08a, c3: 0x7a7a7a },

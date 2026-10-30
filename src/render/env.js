@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode } from './items.js';
 import { glowTex, barkTex } from './textures.js';
-import { branch, leafClump } from './treehouse.js';
+import { branch, leafClump, jungleTree, vine, swayVines } from './treehouse.js';
 import { buildShip, WATERLINE } from './ship.js';
 import { makeOcean } from './ocean.js';
 import { makeLava } from './lava.js';
@@ -239,23 +239,16 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
     }
     case 'jungle': {
       // the great tree itself rises through the middle of the kitchen (render/treehouse.js)
-      const bm = new THREE.MeshStandardMaterial({ map: barkTex(), color: 0xb08a68, roughness: 0.95 });
-      bm.map = bm.map.clone(); bm.map.needsUpdate = true; bm.map.repeat.set(2, 9);
-      // neighbouring trees in the haze, and two framing the kitchen at the sides
-      for (let i = 0; i < 6; i++) {
+      // neighbouring trees in the haze: slender trunks, tiers of small leafy branches, swinging lianas
+      const vines = [];
+      for (let i = 0; i < 8; i++) {
         const side = i % 2 ? 1 : -1;
-        const x = side * (W / 2 + 6 + r() * 10), z = -H / 2 - 9 - r() * 10, rr = 0.6 + r() * 0.9;
-        g.add(part(cyl(14), bm, [x, -14, z], [rr, 24, rr]));
-        leafClump(g, x, 6 + r() * 6, z, 18, 2.4, r, ['#357a2a', '#2f6a26'][i % 2]);
+        const x = side * (W / 2 + 4 + r() * 9), z = -H / 2 - 4 - r() * 12;
+        jungleTree(g, x, z, -16, 22 + r() * 6, r, vines);
       }
-      // hanging lianas
-      const vineM = mat(0x3a6a28, { rough: 0.8 });
-      for (let i = 0; i < 16; i++) {
-        const x = (r() - 0.5) * (W + 10), z = -H / 2 - 1.5 - r() * 3, len = 6 + r() * 8;
-        const v = part(cyl(5), vineM, [x, 12 - len / 2, z], [0.04, len, 0.04]);
-        g.add(v);
-        updaters.push((t) => { v.rotation.z = Math.sin(t * 0.5 + i) * 0.03; });
-      }
+      // lianas hanging from the canopy above, behind the kitchen
+      for (let i = 0; i < 14; i++) vines.push(vine(g, (r() - 0.5) * (W + 10), 9, -H / 2 - 1.5 - r() * 3, 4 + r() * 6, r));
+      updaters.push((t) => swayVines(vines, t));
       // mist layers drifting in the depths below the pods, and the forest floor far down
       const mistT = mistTex();
       for (const [y, op, sp] of [[-5, 0.16, 0.004], [-10, 0.28, -0.003], [-16, 0.42, 0.002]]) {

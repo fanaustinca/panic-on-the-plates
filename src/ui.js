@@ -56,7 +56,7 @@ const MECHANICS = [
   'Tight <b>compartments</b> joined by <b>tube corridors</b>. <b>Laser doors</b> cycle in the tubes, and when <b>gravity fails</b> everything floats. Jump with Space!',
   'Every kitchen floats on its own <b>cloud</b>. Strong <b>gusts</b> push cooks around, <b>lightning</b> strikes the red markers, and mind the <b>holes</b>!',
   'Small <b>treehouses</b> built round the great tree, joined by swaying <b>rope bridges</b>. <b>Monkeys</b> steal food from counters: run into them to make them drop it!',
-  'Ride the <b>conveyor carts</b> back and forth between sections. <b>Belts</b> carry items between stations: flip the <b>lever</b> to reverse them.',
+  'Hop on the <b>walkway conveyors</b> to ride between sections (one lane each way). <b>Belts</b> carry items between stations: flip the <b>lever</b> to reverse them.',
   'Platforms on the clock\'s <b>gears</b>. Random <b>time warps</b> speed up or slow down cooks and stoves. Jump over the <b>cuckoo</b> when it sweeps a row!',
 ];
 export { MECHANICS };
