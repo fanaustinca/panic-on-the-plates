@@ -3,6 +3,7 @@ import { OUTFITS, BOXES, UPGRADES, UPGRADE_MAX, WORLDS, cleanUpg } from './confi
 import { writeSave, openBox } from './save.js';
 import { starThresholds } from './sim.js';
 import { MP_LEVEL } from './levels.js';
+import { initAudio, playMusic, songList } from './audio.js';
 
 const HELP = `commands:
   coins <n>              add n coins (negative takes them away)
@@ -16,6 +17,7 @@ const HELP = `commands:
   win [stars]            end the current round now with that many stars (default 3)
   time <s>               set the seconds left in the current round
   speed <x>              game speed multiplier (1 = normal)
+  music <world> [1|2] [final]   preview a song (worlds: lobby, ${WORLDS.map((w) => w.id).join(', ')}); music list
   fps                    toggle an fps counter
   reset yes              wipe the save
   clear                  clear this log`;
@@ -35,6 +37,12 @@ export function installDev(app) {
   const C = {
     help: () => out(HELP),
     clear: () => { log.innerHTML = ''; },
+    music: (w, n, f) => {
+      if (!w || w === 'list') return out(songList());
+      if (n === 'final') [n, f] = [1, 'final'];
+      initAudio(); playMusic(w, 0, 'dev', { song: Math.max(0, (parseInt(n, 10) || 1) - 1), final: f === 'final' });
+      out(`playing ${w} song ${parseInt(n, 10) || 1}${f === 'final' ? ' (final 30 s arrangement)' : ''}`);
+    },
     coins: (n) => { s().coins = Math.max(0, (s().coins | 0) + (parseInt(n, 10) || 0)); save(); out(`coins: ${s().coins}`); },
     outfits: () => out(OUTFITS.map((o) => `${o.id} (${['common', 'rare', 'epic', 'legendary', 'chroma'][o.tier]})`).join('\n')),
     give: (id) => {

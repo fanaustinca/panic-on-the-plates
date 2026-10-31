@@ -54,7 +54,7 @@ export class Game {
     this.lastCount = null;
     this.buildScene();
     this.hud.startMatch(this);
-    playMusic(this.world.id, 124 + wi * 3, opts.level);
+    playMusic(this.world.id, 0, opts.level);
   }
 
   buildScene() {

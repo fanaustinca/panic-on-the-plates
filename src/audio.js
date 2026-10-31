@@ -1,7 +1,7 @@
 // Synthesised sound effects + a light per-world music loop (Web Audio, no sample files).
 let ctx = null, master = null, sfxBus = null, musicBus = null, noiseBuf = null;
 const settings = { sfx: 0.8, music: 0.45 };
-const MUSIC_GAIN = 1.25; // music bus level (was 0.5: too quiet under the sound effects)
+const MUSIC_GAIN = 1.6; // music bus level (was 0.5, then 1.25: too quiet under the sound effects)
 
 export function initAudio() {
   if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
@@ -77,202 +77,313 @@ export const sfx = {
 };
 
 // ---------------------------------------------------------------- music
-// A small step sequencer. Every level has four procedural tracks of its own, seeded from the level:
-// two for the shift (one picked at random each round) and two for the last 30 seconds (likewise),
-// each with its own groove, progression, motif and lead voice. The tempo never changes mid-song:
-// tension comes from the arrangement. The lobby plays one fixed, hand-written tune.
-const SCALES = {
-  pirate: [0, 2, 3, 5, 7, 8, 10], glacier: [0, 2, 3, 7, 8], volcano: [0, 1, 4, 5, 7, 8, 10], space: [0, 2, 3, 6, 7, 9, 10],
-  clouds: [0, 2, 3, 5, 7, 9, 10], jungle: [0, 3, 5, 6, 7, 10], factory: [0, 1, 3, 5, 6, 8, 10], library: [0, 2, 3, 5, 7, 8, 11],
-};
-const ROOT = { pirate: 50, glacier: 52, volcano: 45, space: 47, clouds: 53, jungle: 48, factory: 45, library: 50 };
-const LEAD = { pirate: 'square', glacier: 'triangle', volcano: 'sawtooth', space: 'square', clouds: 'triangle', jungle: 'square', factory: 'sawtooth', library: 'triangle' };
-const PROGS = [[0, 5, 6, 4], [0, 3, 4, 0], [0, 6, 5, 6], [0, 2, 5, 4], [0, 4, 5, 3], [0, 5, 3, 6]];
-const GROOVES = ['drive', 'shuffle', 'halftime', 'gallop'];
-const FINALS = ['war', 'chase'];
+// Hand-written songs, two per world, each a verse (A) and a chorus (B) of 8 bars, in that world's style:
+// a 6/8 sea shanty on the ship, music-box bells on the glacier, a calypso in the jungle, a harpsichord
+// toccata in the clock tower... A round plays one of the two songs (the "shift" arrangement) and the last
+// 30 seconds cut to a heavier battle arrangement of one of them, chorus first. That's the four tracks of a
+// level; each level also sits in its own key. The tempo never changes mid-song. The lobby has its own tune.
 let music = null;
 const mix = { level: 0, panic: 0, fire: 0, final: false };
 const hz = (n) => 440 * 2 ** ((n - 69) / 12);
 const seeded = (str) => { let s = str.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 2147483647, 7) || 1; return () => ((s = (s * 16807) % 2147483647) / 2147483647); };
-
-/** One procedural track: groove + progression + motifs, all from a seed string. */
-function makeTrack(world, seed, kinds) {
-  const r = seeded(seed);
-  const scale = SCALES[world] || SCALES.pirate;
-  return {
-    kind: kinds[Math.floor(r() * kinds.length)],
-    scale, root: (ROOT[world] || 50) + [0, 0, 2, -2, 3][Math.floor(r() * 5)],
-    prog: PROGS[Math.floor(r() * PROGS.length)].map((d) => d % scale.length),
-    ost: Array.from({ length: 16 }, (_, i) => [0, 2, 4, 2, 0, 4, 2, 4, 0, 1, 2, 4, 2, 1, 0, 4][(i + Math.floor(r() * 3)) % 16] + (r() < 0.25 ? 1 : 0)),
-    mel: Array.from({ length: 64 }, () => (r() < 0.55 ? Math.floor(r() * 7) : null)),
-    lead: r() < 0.5 ? LEAD[world] || 'square' : ['square', 'triangle', 'sawtooth'][Math.floor(r() * 3)],
-  };
+const PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const pc = (l, acc) => PC[l] + (acc === '#' ? 1 : acc === 'b' ? -1 : 0);
+/** 'Dm' / 'A7' / 'Bb' -> chord tones as MIDI notes, root in octave 3 */
+function chordOf(name) {
+  const [, l, acc, q, sev] = name.match(/^([A-G])([#b]?)(m|dim)?(7)?$/);
+  const r = 48 + pc(l, acc);
+  const t = [r, r + (q ? 3 : 4), r + (q === 'dim' ? 6 : 7)];
+  if (sev) t.push(r + (q === 'm' ? 10 : 10));
+  return t;
 }
+/** chords: 8 names; mel: 8 bars of 8th notes ('D5' note, '-' hold, '.' rest) -> {ch, mel: [{n, len}|null per 8th]} */
+function section(chords, mel, meter) {
+  const toks = mel.trim().split(/\s*\|\s*/).flatMap((b) => {
+    const t = b.split(/\s+/);
+    if (t.length !== meter) throw new Error(`bar "${b}" has ${t.length} 8ths, not ${meter}`);
+    return t;
+  });
+  const out = toks.map((t, i) => {
+    const m = t.match(/^([A-G])([#b]?)(\d)$/);
+    if (!m) return null;
+    let len = 1;
+    while (toks[i + len] === '-') len++;
+    return { n: 12 * (+m[3] + 1) + pc(m[1], m[2]), len };
+  });
+  return { ch: chords.trim().split(/\s+/).map(chordOf), mel: out };
+}
+const song = (name, bpm, meter, beat, A, B) => ({ name, bpm, meter, beat, A: section(A[0], A[1], meter), B: section(B[0], B[1], meter) });
+
+const SONGS = {
+  // swashbuckling 6/8 shanties
+  pirate: [
+    song('Plank & Pan', 72, 6, 3,
+      ['Dm Dm Bb C Dm Gm A Dm', 'D5 - A4 D5 - F5 | E5 - D5 C5 - A4 | Bb4 - D5 F5 - D5 | E5 - - C5 . . | D5 - A4 D5 - F5 | G5 - F5 E5 - D5 | C#5 - E5 A5 - G5 | F5 - E5 D5 . .'],
+      ['F C Dm Bb Gm Dm A Dm', 'A5 - - F5 - A5 | G5 - - E5 - C5 | F5 - E5 D5 - A4 | Bb4 - C5 D5 - - | G5 - - Bb5 - G5 | F5 - - A5 - F5 | E5 - D5 C#5 - E5 | D5 - - - . .']),
+    song('Cannon Jig', 76, 6, 3,
+      ['Am G Am E Am F E Am', 'E5 A5 G5 E5 D5 C5 | D5 G5 F5 D5 C5 B4 | C5 E5 A5 E5 C5 A4 | B4 - G#4 E4 - - | E5 A5 G5 E5 D5 C5 | F5 A5 G5 F5 E5 D5 | E5 G#5 B5 A5 G#5 E5 | A5 - E5 A4 . .'],
+      ['F G Am E F G E Am', 'C6 - A5 F5 - A5 | B5 - G5 D5 - G5 | C6 - B5 A5 - E5 | G#5 - - E5 - - | A5 - F5 C5 - F5 | G5 - D5 B4 - D5 | E5 F5 E5 D5 C5 B4 | A4 - - - . .']),
+  ],
+  // music-box bells and a frosty polka
+  glacier: [
+    song('Snowglobe', 112, 8, 2,
+      ['Em C Am B Em C D Em', 'B4 E5 G5 B5 A5 G5 F#5 G5 | E5 - - . C5 E5 G5 E5 | A5 G5 E5 C5 D5 E5 - . | F#5 - D#5 - B4 - . . | B4 E5 G5 B5 A5 G5 F#5 G5 | E6 - D6 C6 B5 - G5 - | A5 F#5 D5 F#5 A5 - C6 B5 | G5 - E5 - . . . .'],
+      ['G D Em C G D B Em', 'D6 - B5 G5 D6 - B5 G5 | F#5 - A5 - D5 - . . | E5 G5 B5 E6 D6 B5 G5 B5 | C6 - B5 - A5 - G5 - | D6 - B5 G5 D6 - B5 G5 | A5 - F#5 - D6 - C6 - | D#5 F#5 B5 A5 G5 F#5 E5 D#5 | E5 - - - . . . .']),
+    song('Frostbite Polka', 128, 8, 2,
+      ['G D G D G C D G', 'D5 . B4 . D5 G5 - . | F#5 . D5 . A4 D5 - . | B4 D5 G5 B5 A5 G5 F#5 E5 | D5 - A4 - D5 . . . | D5 . B4 . D5 G5 - . | E5 . C5 . E5 A5 - . | F#5 A5 D6 C6 B5 A5 G5 F#5 | G5 - D5 - G4 . . .'],
+      ['C G D G C G D G', 'E5 E5 G5 - E5 E5 C6 - | B5 - G5 - D5 - . . | F#5 F#5 A5 - F#5 F#5 D6 - | B5 - - - G5 . . . | E5 E5 G5 - E5 E5 C6 - | D6 - B5 - G5 - B5 - | A5 - F#5 - E5 - F#5 - | G5 - - - . . . .']),
+  ],
+  // stomping riffs in the Phrygian-dominant mode
+  volcano: [
+    song('Magma Stomp', 120, 8, 2,
+      ['A A Dm A A A Bb A', 'A4 . A4 Bb4 C#5 - A4 . | E5 . D5 C#5 Bb4 - A4 . | D5 . D5 E5 F5 - D5 . | C#5 - Bb4 - A4 - . . | A4 . A4 Bb4 C#5 - A4 . | E5 . F5 E5 D5 - C#5 . | D5 - Bb4 - F5 - E5 D5 | C#5 - - - A4 . . .'],
+      ['Dm A Bb A Dm Gm Bb A', 'A5 - - F5 D5 - F5 A5 | G5 - F5 E5 C#5 - E5 - | F5 - - D5 Bb4 - D5 F5 | E5 - - - . . . . | A5 - - F5 D5 - F5 A5 | Bb5 - A5 G5 F5 - E5 F5 | D5 - E5 F5 G5 - F5 E5 | A5 - - - . . . .']),
+    song('Fire Dance', 120, 8, 2,
+      ['Em Em Am B Em C B Em', 'E5 E5 . G5 F#5 E5 D#5 E5 | B4 - . B4 C5 B4 A4 B4 | C5 C5 . E5 D5 C5 B4 C5 | D#5 - F#5 - B5 - . . | E5 E5 . G5 F#5 E5 D#5 E5 | G5 - F#5 E5 C5 - E5 G5 | F#5 G5 F#5 E5 D#5 - B4 . | E5 - - - . . . .'],
+      ['Em C Am B Em C B Em', 'B5 . B5 . A5 G5 F#5 G5 | E5 - - - C5 - E5 - | A5 . A5 . G5 F#5 E5 F#5 | D#5 - - - B4 - . . | B5 . B5 . A5 G5 F#5 G5 | E6 - D6 C6 B5 - A5 - | B5 C6 B5 A5 G5 - F#5 - | E5 - - - . . . .']),
+  ],
+  // retro synthwave
+  space: [
+    song('Orbit Omelette', 116, 8, 2,
+      ['Bm G D A Bm G D A', 'F#5 - B4 - D5 - F#5 E5 | D5 - B4 - . G4 B4 D5 | F#5 - A5 - F#5 - E5 D5 | E5 - - - C#5 - . . | F#5 - B4 - D5 - F#5 E5 | D5 - G5 - F#5 - E5 D5 | A5 - F#5 - D5 - E5 F#5 | E5 - - - . . . .'],
+      ['Bm G D A Bm G Em F#', 'B5 - A5 - F#5 - D5 E5 | G5 - F#5 - D5 - B4 . | A5 - F#5 - D5 - F#5 A5 | C#6 - - - A5 - . . | B5 - A5 - F#5 - D5 E5 | G5 - B5 - D6 - B5 - | A5 G5 F#5 E5 D5 - E5 - | F#5 - - - . . . .']),
+    song('Zero-G Groove', 108, 8, 2,
+      ['Em A Em A Em A C B', 'E5 . G5 E5 . A5 . G5 | . E5 - D5 E5 . . . | E5 . G5 E5 . B5 . A5 | G5 - E5 - D5 - . . | E5 . G5 E5 . A5 . G5 | . E5 - D5 E5 . G5 A5 | B5 - A5 G5 . E5 . G5 | F#5 - - - D#5 - . .'],
+      ['C D Em Em C D Am B', 'G5 - - E5 G5 - A5 - | F#5 - - D5 F#5 - A5 - | B5 - A5 G5 E5 - G5 - | E5 - - - . . . . | G5 - - E5 G5 - C6 - | B5 - - A5 F#5 - D5 - | E5 - G5 - A5 - C6 - | B5 - - - . . . .']),
+  ],
+  // breezy ukulele pop and a feather-light waltz
+  clouds: [
+    song('Sky High Souffle', 100, 8, 2,
+      ['F C Dm Bb F C C F', 'C5 F5 A5 - G5 F5 - . | E5 G5 C6 - Bb5 A5 G5 - | A5 - F5 - D5 - F5 A5 | G5 - - F5 D5 - . . | C5 F5 A5 - G5 F5 - . | E5 G5 C6 - D6 C6 Bb5 - | Bb5 A5 G5 - E5 G5 C5 - | F5 - - - . . . .'],
+      ['Bb F Gm C Bb F C F', 'D6 - C6 Bb5 - F5 - . | C6 - A5 F5 - C5 - . | Bb5 - A5 G5 - D5 - G5 | A5 - - - G5 - . . | D6 - C6 Bb5 - F5 - Bb5 | C6 - A5 F5 - A5 C6 - | E6 - D6 C6 - Bb5 - G5 | F5 - - - . . . .']),
+    song('Feather Waltz', 150, 6, 2,
+      ['F C Dm C Bb F C7 F', 'A5 - - - C6 - | G5 - - - E5 - | F5 - A5 - D6 - | C6 - - - . . | D6 - - - Bb5 - | A5 - - - F5 - | G5 - A5 - Bb5 - | A5 - - - . .'],
+      ['Dm Am Bb F Gm F C7 F', 'D6 - E6 - F6 - | E6 - - - C6 - | D6 - C6 - Bb5 - | A5 - - - F5 - | G5 - A5 - Bb5 - | A5 - - - F5 - | E5 - F5 - G5 - | F5 - - - . .']),
+  ],
+  // calypso marimbas and a tribal vine swing
+  jungle: [
+    song('Banana Bounce', 112, 8, 2,
+      ['C F G C C F G C', 'G5 - E5 G5 - E5 C5 . | A5 - F5 A5 - F5 C5 . | B5 - G5 B5 - D6 C6 B5 | C6 - - G5 - - . . | G5 - E5 G5 - E5 C5 . | A5 - F5 A5 - C6 A5 F5 | D5 - E5 F5 - G5 B4 D5 | C5 - - - . . . .'],
+      ['F C G C F C G C', 'A5 A5 - A5 - G5 F5 - | G5 G5 - G5 - E5 C5 - | D5 D5 - E5 - F5 G5 - | E5 - - - C5 - . . | A5 A5 - A5 - G5 F5 - | G5 G5 - G5 - C6 - - | B5 - A5 G5 - F5 D5 - | C5 - - - . . . .']),
+    song('Vine Swing', 108, 8, 2,
+      ['Am Am G Am Am F G Am', 'A4 C5 D5 E5 - G5 E5 D5 | C5 - A4 - . . . . | G4 B4 D5 G5 - A5 G5 E5 | E5 - D5 - C5 - . . | A4 C5 D5 E5 - G5 E5 D5 | C5 - F5 - A5 - G5 F5 | G5 - E5 D5 - B4 D5 - | A4 - - - . . . .'],
+      ['Am G F E Am G E Am', 'E6 - D6 C6 A5 - C6 D6 | D6 - - B5 G5 - . . | C6 - A5 G5 F5 - A5 C6 | B5 - - - G#5 - . . | E6 - D6 C6 A5 - C6 D6 | D6 - - B5 G5 - E6 D6 | C6 B5 A5 G#5 B5 - E5 - | A5 - - - . . . .']),
+  ],
+  // clanky funk and a chiptune
+  factory: [
+    song('Assembly Line', 120, 8, 2,
+      ['Am Am F E Am Am F E', 'A4 A4 . C5 . D5 . E5 | . G5 . E5 D5 C5 . . | A4 A4 . C5 . D5 . F5 | . E5 . D5 B4 G#4 . . | A4 A4 . C5 . D5 . E5 | . G5 . A5 . C6 . A5 | G5 . E5 . D5 . C5 D5 | E5 - - - . . . .'],
+      ['Dm Am Dm E F G E Am', 'F5 . F5 . A5 . D6 . | C6 . B5 . A5 - . . | F5 . F5 . A5 . D6 . | B5 . G#5 . E5 - . . | A5 . A5 . C6 . A5 . | B5 . B5 . D6 . B5 . | G#5 - B5 - E6 - D6 - | C6 - - - A5 . . .']),
+    song('Rivets & Gears', 126, 8, 2,
+      ['Em C D B Em C D Em', 'E5 G5 B5 G5 E5 G5 B5 G5 | E5 G5 C6 G5 E5 G5 C6 G5 | D5 F#5 A5 F#5 D5 F#5 A5 F#5 | D#5 F#5 B5 F#5 D#5 - . . | B5 - . B5 A5 G5 A5 B5 | C6 - . G5 E5 G5 C6 - | D6 - C6 B5 A5 - F#5 - | E5 - - - . . . .'],
+      ['C D Em B C D B Em', 'G5 - E5 - G5 A5 - . | F#5 - D5 - F#5 A5 - . | G5 - E5 - G5 B5 - . | A5 - G5 F#5 D#5 - . . | G5 - E5 - G5 C6 - . | A5 - F#5 - A5 D6 - . | B5 A5 G5 F#5 E5 F#5 G5 A5 | B5 - - - E5 . . .']),
+  ],
+  // baroque harpsichord over a ticking clock, and a cuckoo-clock waltz
+  library: [
+    song('Tick-Tock Toccata', 120, 8, 2,
+      ['Dm A Dm A Gm Dm A Dm', 'D5 F5 A5 D6 C#6 D6 A5 F5 | E5 A5 C#6 E6 D6 C#6 A5 E5 | F5 A5 D6 F6 E6 D6 C#6 D6 | E6 - A5 - C#6 - . . | D5 G5 Bb5 D6 C6 Bb5 A5 G5 | F5 A5 D6 F6 E6 D6 A5 F5 | G5 F5 E5 F5 G5 E5 C#5 E5 | D5 - - - . . . .'],
+      ['F C Dm A Bb Gm A Dm', 'C6 - A5 - F5 - A5 C6 | Bb5 - G5 - E5 - G5 Bb5 | A5 - F5 - D5 - F5 A5 | G5 - - F5 E5 - . . | F5 - D6 - Bb5 - F5 D5 | G5 - Bb5 - D6 - C6 Bb5 | A5 Bb5 A5 G5 F5 E5 D5 C#5 | D5 - - - . . . .']),
+    song('Cuckoo Waltz', 160, 6, 2,
+      ['Gm D Gm Cm Cm Gm D Gm', 'D5 - G5 - Bb5 - | A5 - - - F#5 - | G5 - Bb5 - D6 - | C6 - - - . . | Eb6 - D6 - C6 - | Bb5 - A5 - G5 - | F#5 - G5 - A5 - | G5 - - - . .'],
+      ['Eb Bb Cm D Eb Bb D Gm', 'G5 - - Bb5 - G5 | F5 - - D5 - Bb4 | Eb5 - G5 - C6 - | A5 - - - D5 - | G5 - - Bb5 - Eb6 | D6 - - Bb5 - F5 | A5 - C6 - F#5 - | G5 - - - . .']),
+  ],
+  // the lobby: a jaunty cooking-show theme
+  lobby: [
+    song('Order Up!', 118, 8, 2,
+      ['C Am F G C Am G C', 'E5 G5 C6 - B5 C6 G5 - | A5 - E5 - . C5 E5 A5 | A5 G5 F5 - E5 F5 A5 - | G5 - - - D5 . . . | E5 G5 C6 - B5 C6 G5 - | A5 - E5 - . C6 B5 A5 | D6 - B5 G5 - A5 B5 - | C6 - - - . . . .'],
+      ['F C Dm G F C G C', 'A5 - A5 G5 F5 - A5 - | G5 - G5 E5 C5 - E5 - | F5 - F5 E5 D5 - F5 A5 | G5 - - - B5 - D6 - | A5 - A5 G5 F5 - A5 C6 | E6 - D6 C6 G5 - E5 - | F5 E5 D5 - G5 - B5 - | C6 - - - . . . .']),
+  ],
+};
+
+// ---- instruments
+const M = () => musicBus;
+const kick = (at, v = 0.34) => tone(60, 0.16, { vol: v, slide: 0.4, at, bus: M() });
+const snare = (at, v = 0.13) => noise(0.13, { vol: v, freq: 1900, q: 0.8, at, bus: M() });
+const clap = (at, v = 0.1) => { noise(0.08, { vol: v, freq: 1400, q: 1.2, at, bus: M() }); noise(0.07, { vol: v * 0.7, freq: 2200, q: 1, at: at + 0.012, bus: M() }); };
+const hat = (at, v = 0.035) => noise(0.03, { vol: v, freq: 9000, type: 'highpass', at, bus: M() });
+const shaker = (at, v = 0.03) => noise(0.05, { vol: v, freq: 6500, q: 1.5, at, bus: M() });
+const tom = (at, f, v = 0.2) => tone(f, 0.2, { vol: v, slide: 0.55, at, bus: M() });
+const bongo = (at, f, v = 0.12) => tone(f, 0.1, { vol: v, slide: 0.85, at, bus: M() });
+const block = (at, f, v = 0.06) => tone(f, 0.05, { type: 'triangle', vol: v, at, bus: M() });
+const clank = (at, v = 0.12) => { noise(0.1, { vol: v, freq: 3200, q: 14, at, bus: M() }); tone(1250, 0.14, { type: 'square', vol: v * 0.12, slide: 0.97, at, bus: M() }); };
+const tick = (at, hi) => tone(hi ? 2400 : 1600, 0.025, { type: 'square', vol: 0.045, at, bus: M() });
+const boom = (at) => { tone(42, 0.9, { vol: 0.32, slide: 0.5, at, bus: M() }); noise(0.7, { vol: 0.14, freq: 180, q: 0.4, type: 'lowpass', at, bus: M() }); };
+const riser = (at, dur) => noise(dur, { vol: 0.06, freq: 500, q: 2, sweep: 8, at, bus: M() });
+const chord = (notes, at, dur, type, v) => notes.forEach((n, j) => tone(hz(n), dur, { type, vol: v, at: at + j * 0.012, bus: M() }));
+
+/** a melody / bass voice; n is a MIDI note */
+function voice(kind, n, dur, at, v = 1) {
+  const f = hz(n), bus = M(), T = (fr, d, o) => tone(fr, d, { ...o, vol: o.vol * v, at: at + (o.at || 0), bus });
+  switch (kind) {
+    case 'accordion': T(f, dur, { type: 'square', vol: 0.03, attack: 0.02 }); T(f * 1.005, dur, { type: 'square', vol: 0.025, attack: 0.02 }); T(f / 2, dur, { type: 'triangle', vol: 0.03, attack: 0.02 }); break;
+    case 'bell': T(f, Math.max(dur, 0.6), { vol: 0.09, attack: 0.002 }); T(f * 2, 0.35, { vol: 0.03, attack: 0.002 }); T(f * 3.01, 0.15, { vol: 0.015, attack: 0.002 }); break;
+    case 'brass': T(f, dur, { type: 'sawtooth', vol: 0.04, attack: 0.03 }); T(f * 0.996, dur, { type: 'sawtooth', vol: 0.03, attack: 0.04 }); break;
+    case 'synth': T(f, dur, { type: 'sawtooth', vol: 0.035 }); T(f * 1.007, dur, { type: 'square', vol: 0.02 }); T(f, dur, { type: 'sawtooth', vol: 0.012, at: 0.18 }); T(f, dur, { type: 'sawtooth', vol: 0.006, at: 0.36 }); break;
+    case 'flute': T(f, dur, { type: 'triangle', vol: 0.085, attack: 0.04 }); T(f * 2, dur, { vol: 0.015, attack: 0.05 }); break;
+    case 'marimba': T(f, Math.min(dur, 0.4), { type: 'triangle', vol: 0.1, attack: 0.002 }); T(f * 4, 0.05, { vol: 0.025, attack: 0.002 }); break;
+    case 'chip': T(f, dur * 0.75, { type: 'square', vol: 0.04 }); T(f / 2, dur * 0.75, { type: 'triangle', vol: 0.03 }); break;
+    case 'harpsi': T(f, Math.min(dur, 0.6), { type: 'sawtooth', vol: 0.055, attack: 0.002 }); T(f * 2, 0.15, { type: 'square', vol: 0.016, attack: 0.002 }); break;
+    case 'piano': T(f, dur, { type: 'triangle', vol: 0.08 }); T(f * 2, dur * 0.6, { vol: 0.02 }); break;
+    default: T(f, dur, { type: kind, vol: 0.05 });
+  }
+}
+
+// ---- per-world band: drums, bass and comping for one 16th step. k = { s: step in bar, S: steps per bar,
+// BS: steps per beat, bar: 0..7 in the section, ch: chord tones, at, step, fin: battle arrangement, lvl }
+const BANDS = {
+  pirate: { lead: 'accordion', fin: 'brass', play(k) {
+    const { s, S, BS, bar, ch, at, step, fin, lvl } = k, r = ch[0] - 12;
+    if (s === 0) kick(at, 0.32); if (s === BS) kick(at, fin ? 0.3 : 0.2);
+    if (s % 2 === 0 && s % BS) noise(0.05, { vol: 0.04, freq: 7000, q: 1, at, bus: M() }); // tambourine
+    if (!fin) {
+      if (s === 0) voice('sawtooth', r, step * 4, at, 0.8); if (s === BS) voice('sawtooth', r + 7, step * 4, at, 0.7);
+      if (s === 2 || s === 4 || s === BS + 2 || s === BS + 4) chord(ch, at, step * 1.4, 'square', 0.009 + lvl * 0.004);
+    } else {
+      if (s % 2 === 0) voice('sawtooth', r + (s % BS === 4 ? 12 : 0), step * 1.6, at, 0.9);
+      if (s % 2 === 0 && s % BS) tom(at, s > BS ? 90 : 110, 0.16);
+      if (s === 0 || s === BS) chord(ch.map((n) => n + 12), at, step * 3, 'sawtooth', 0.012);
+      if (bar === 0 && s === 0) boom(at);
+      if (bar === 7 && s >= BS) snare(at, 0.05 + (s - BS) * 0.015);
+    }
+  } },
+  glacier: { lead: 'bell', fin: 'bell', play(k) {
+    const { s, S, ch, at, step, fin, lvl, bar } = k, r = ch[0] - 12;
+    const arp = [0, 1, 2, 1][(s / 2) % 4 | 0];
+    if (!fin) {
+      if (s === 0 || s === 8) kick(at, 0.22); if (s === 4 || s === 12) block(at, 1800, 0.05);
+      if (s % 2 === 1) hat(at, 0.02 + lvl * 0.02);
+      if (s === 0) voice('sine', r, step * 15, at, 2.6);
+      if (s % 2 === 0) tone(hz(ch[arp] + 24), step * 3, { vol: 0.02, at, bus: M() });
+    } else {
+      if (s % 4 === 0) kick(at, 0.32); if (s === 4 || s === 12) snare(at, 0.12); hat(at, s % 2 ? 0.04 : 0.02);
+      if (s % 2 === 0) voice('sawtooth', r + (s % 4 === 2 ? 12 : 0), step * 1.6, at, 0.9);
+      tone(hz(ch[[0, 1, 2, 1][s % 4]] + 24), step * 1.5, { vol: 0.02, at, bus: M() });
+      if (s === 0) chord(ch.map((n) => n + 12), at, step * S, 'triangle', 0.02);
+      if (bar === 7 && s === 0) riser(at, step * S);
+    }
+  } },
+  volcano: { lead: 'brass', fin: 'brass', play(k) {
+    const { s, ch, at, step, fin, bar } = k, r = ch[0] - 12;
+    if (!fin) {
+      if ([0, 3, 8, 10].includes(s)) kick(at, 0.34); if (s === 4 || s === 12) snare(at, 0.14);
+      if (s === 14) tom(at, 120); if (s === 15) tom(at, 95);
+      if (s % 2 === 0) { voice('sawtooth', r, step * 0.9, at, 1); voice('sawtooth', r + 7, step * 0.9, at, 0.6); }
+      if (s % 2 === 1) hat(at, 0.03);
+    } else {
+      if (s % 2 === 0) kick(at, 0.3); if (s === 4 || s === 12) snare(at, 0.15);
+      if (bar === 7 && s >= 8) tom(at, 140 - s * 4, 0.18);
+      voice('sawtooth', r + (s % 4 === 2 ? 12 : 0), step * 0.8, at, 1); hat(at, 0.035);
+      if (s === 0) { chord([ch[0], ch[0] + 7], at, step * 16, 'sawtooth', 0.025); boom(at); }
+    }
+  } },
+  space: { lead: 'synth', fin: 'synth', play(k) {
+    const { s, ch, at, step, fin, bar } = k, r = ch[0] - 12;
+    if (s === 0 || s === 8 || (fin && s % 4 === 0) || (!fin && s === 10 && bar % 2)) kick(at, 0.32);
+    if (s === 4 || s === 12) noise(0.25, { vol: 0.12, freq: 1700, q: 0.6, at, bus: M() });
+    if (s % 4 === 2 || (fin && s % 2)) hat(at, 0.04);
+    if (fin || s % 2 === 0) voice('sawtooth', r + ((fin ? s : s / 2) % 2 ? 12 : 0), step * (fin ? 0.8 : 1.6), at, fin ? 0.8 : 1);
+    tone(hz(ch[[0, 1, 2, 1][s % 4]] + (fin ? 24 : 12) + (s % 8 >= 4 ? 12 : 0)), step * 0.8, { type: 'triangle', vol: 0.02, at, bus: M() });
+    if (fin && bar === 7 && s === 0) riser(at, step * 16);
+  } },
+  clouds: { lead: 'flute', fin: 'flute', play(k) {
+    const { s, S, BS, ch, at, step, fin, lvl } = k, r = ch[0] - 12, waltz = S === 12;
+    if (waltz) {
+      if (s === 0 || (fin && s % BS === 0)) kick(at, 0.22); if (s === 0) voice('triangle', r, step * 3.5, at, 3);
+      if (s === BS || s === 2 * BS) chord(ch.map((n) => n + 12), at, step * 2, 'triangle', 0.025);
+      if (fin && s % 2 === 0) shaker(at, 0.03); if (fin && s === BS * 2) clap(at, 0.06);
+      return;
+    }
+    if (s === 0 || s === 10 || (fin && s % 4 === 0)) kick(at, 0.24); if (s === 4 || s === 12) clap(at, fin ? 0.1 : 0.06);
+    shaker(at, s % 2 ? 0.03 : 0.015);
+    if (s === 0) voice('triangle', r, step * 7, at, 3); if (s === 8) voice('triangle', r + 7, step * 7, at, 2.6);
+    if (fin && s % 4 === 2) voice('triangle', r + 12, step * 1.5, at, 2);
+    if (s % 4 === 2 || (fin && s % 2 === 0)) chord(ch.map((n) => n + 12), at, step * 1.2, 'triangle', 0.018 + lvl * 0.006);
+  } },
+  jungle: { lead: 'marimba', fin: 'marimba', play(k) {
+    const { s, ch, at, step, fin, bar } = k, r = ch[0] - 12;
+    if (s === 0 || s === 6 || s === 12) { kick(at, 0.3); voice('triangle', r + (s === 6 ? 7 : s === 12 ? 12 : 0), step * 3, at, 3); }
+    if (s === 2 || s === 10 || s === 14) bongo(at, 430); if (s === 7 || s === 11) bongo(at, 310);
+    shaker(at, s % 2 ? 0.03 : 0.015);
+    if (s === 4 || s === 12) chord(ch.map((n) => n + 12), at, step, 'triangle', 0.03);
+    if (fin) {
+      if (s % 2 === 1) tom(at, [180, 150, 200, 165][(s >> 1) % 4], 0.1);
+      if (s === 4 || s === 12) snare(at, 0.1);
+      if (bar % 4 === 3 && s === 8) sfx.monkey();
+    }
+  } },
+  factory: { lead: 'chip', fin: 'chip', play(k) {
+    const { s, ch, at, step, fin, bar } = k, r = ch[0] - 12;
+    if (s === 0 || s === 8 || (fin && s % 4 === 0) || s === 10) kick(at, 0.3);
+    if (s === 4 || s === 12) clank(at, 0.14); if (fin && s % 4 === 2) clank(at, 0.06);
+    hat(at, s % 2 ? 0.04 : 0.02);
+    const b = ['R', 0, 'R', 'O', 0, 'R', 0, '5', 'R', 0, 'R', 'O', 0, '5', 0, 'R'][s];
+    if (b) voice('square', r + (b === 'O' ? 12 : b === '5' ? 7 : 0), step * 0.7, at, 0.8);
+    if (bar % 4 === 3 && s === 14) noise(0.4, { vol: 0.06, freq: 4000, type: 'highpass', at, bus: M() }); // steam
+    if (fin && bar === 0 && s === 0) { clank(at, 0.3); boom(at); }
+  } },
+  library: { lead: 'harpsi', fin: 'harpsi', play(k) {
+    const { s, S, BS, ch, at, step, fin, bar } = k, r = ch[0] - 12;
+    if (s % BS === 0) tick(at, (s / BS) % 2 === 0);
+    if (fin && s % BS === BS / 2) tick(at, false);
+    if (s === 0 || s === S / 2 || (fin && s % BS === 0)) kick(at, fin ? 0.3 : 0.24);
+    if (s % 2 === 0) voice('harpsi', r + [0, 7, 16, 7][(s / 2) % 4], step * 1.8, at, 1); // Alberti bass
+    if (fin && s === 0 && bar % 2 === 0) { tone(hz(ch[0] + 24), 1.6, { vol: 0.06, at, bus: M() }); tone(hz(ch[0] + 24) * 2.76, 0.6, { vol: 0.02, at, bus: M() }); }
+    if (fin && bar === 7 && s >= S / 2) snare(at, 0.04 + (s - S / 2) * 0.012);
+  } },
+  lobby: { lead: 'piano', fin: 'piano', play(k) {
+    const { s, ch, at, step } = k, r = ch[0] - 12;
+    if (s === 0 || s === 10) kick(at, 0.24); if (s === 4 || s === 12) snare(at, 0.07);
+    if (s % 4 === 2) hat(at, 0.035);
+    if (s === 0) voice('triangle', r, step * 5, at, 3); if (s === 6) voice('triangle', r + 7, step * 2, at, 2.6);
+    if (s === 8) voice('triangle', r + 12, step * 3, at, 2.6); if (s === 14) voice('triangle', r + 7, step * 2, at, 2.2);
+    if (s === 2 || s === 6 || s === 10 || s === 14) chord(ch.map((n) => n + 12), at, step * 1.3, 'sine', 0.03);
+  } },
+};
 
 /** k: 0..1 overall tension, panic: an order is about to expire, fire: kitchen fire, final: last 30 s */
 export function setIntensity(k, { panic = false, fire = false, final = false } = {}) {
   mix.level = k; mix.panic = panic ? 1 : 0; mix.fire = fire ? 1 : 0; mix.final = final;
 }
-/** world: world id or 'lobby'; key: the level (e.g. '3-4') whose four tracks to draw from. */
-export function playMusic(world, bpm = 132, key = '') {
+/** world: world id or 'lobby'; key: the level (e.g. '3-4'), which sets the key the songs play in. */
+export function playMusic(world, bpm = 0, key = '', force = null) {
   stopMusic();
   if (!ctx) return;
   mix.level = 0; mix.panic = 0; mix.fire = 0; mix.final = false;
-  if (world === 'lobby') { lobbyMusic(); return; }
-  const pick = Math.random() < 0.5 ? 0 : 1, pickF = Math.random() < 0.5 ? 0 : 1;
-  // the two shift tracks of a level always differ in groove, and so do the two finales
-  const base = makeTrack(world, `${world}-${key}-n0`, GROOVES);
-  const alt = makeTrack(world, `${world}-${key}-n1`, GROOVES.filter((g) => g !== base.kind));
-  const fin0 = makeTrack(world, `${world}-${key}-f0`, FINALS);
-  const fin1 = makeTrack(world, `${world}-${key}-f1`, FINALS.filter((g) => g !== fin0.kind));
-  const main = pick ? alt : base, fin = pickF ? fin1 : fin0;
-  const tempo = bpm + (main.kind === 'halftime' ? 8 : main.kind === 'shuffle' ? -6 : 0);
-  let i = 0, next = ctx.currentTime + 0.1, finalArr = false;
+  const songs = SONGS[world] || SONGS.lobby, band = BANDS[world] || BANDS.lobby;
+  const r = seeded(`${world}-${key}`);
+  const tr = world === 'lobby' ? 0 : [0, 0, 2, -2, 1, -1, 3][Math.floor(r() * 7)];
+  let shift = songs[Math.floor(Math.random() * songs.length)];
+  let battle = songs[Math.floor(Math.random() * songs.length)];
+  if (force) { shift = battle = songs[force.song % songs.length]; mix.final = !!force.final; }
+  let fin = mix.final, cur = fin ? battle : shift, i = 0, next = ctx.currentTime + 0.1;
   const id = setInterval(() => {
-    const step = 60 / tempo / 4; // 16th notes
     while (next < ctx.currentTime + 0.2) {
-      const at = next - ctx.currentTime, b16 = i % 16, bar = Math.floor(i / 16) % 4;
-      if (b16 === 0 && mix.final !== finalArr) {
-        finalArr = mix.final; // the finale only switches in on a bar line
-        if (finalArr) { noise(1.6, { vol: 0.16, freq: 5000, q: 0.4, at, bus: musicBus }); tone(40, 1.2, { vol: 0.35, slide: 0.5, at, bus: musicBus }); }
+      const S = cur.meter * 2, step = 60 / cur.bpm / cur.beat / 2;
+      if (i % S === 0 && mix.final !== fin && world !== 'lobby') {
+        fin = mix.final; cur = fin ? battle : shift; i = 0; // switch on a bar line, chorus first
+        if (fin) { noise(1.6, { vol: 0.16, freq: 5000, q: 0.4, at: next - ctx.currentTime, bus: musicBus }); tone(40, 1.2, { vol: 0.35, slide: 0.5, at: next - ctx.currentTime, bus: musicBus }); }
+        continue;
       }
-      const T = finalArr ? fin : main;
-      const deg = (d) => T.scale[((d % T.scale.length) + T.scale.length) % T.scale.length] + 12 * Math.floor(d / T.scale.length);
-      PLAY[T.kind]({ T, deg, chord: T.prog[bar], b16, bar, i, at, step, bus: musicBus });
+      const at = next - ctx.currentTime, s = i % S, barN = Math.floor(i / S), loop = Math.floor(barN / 16);
+      const sec = (Math.floor(barN / 8) % 2 === 0) !== fin ? cur.A : cur.B, bar = barN % 8;
+      const ch = sec.ch[bar].map((n) => n + tr);
+      band.play({ s, S, BS: cur.beat * 2, bar, ch, at, step, fin, lvl: mix.level });
+      if (s % 2 === 0) {
+        const ev = sec.mel[bar * cur.meter + s / 2];
+        if (ev) {
+          const n = ev.n + tr, dur = ev.len * step * 2 * 0.92;
+          voice(fin ? band.fin : band.lead, n, dur, at, fin ? 1.25 : 1);
+          if (fin) voice('sawtooth', n - 12, dur, at, 0.35);
+          else if (loop % 2 || mix.level > 0.5) voice('sine', n + 12, dur, at, 0.35);
+        }
+      }
+      if (mix.panic && s % 4 === 0) tone(hz(ch[0] + 25), step * 0.7, { type: 'square', vol: 0.03, at, bus: musicBus });
+      if (mix.fire && s === 0) tone(700, step * 6, { type: 'triangle', vol: 0.05, slide: 1.5, at, bus: musicBus });
       next += step; i++;
     }
   }, 40);
   music = { id };
 }
 export function stopMusic() { if (music) { clearInterval(music.id); music = null; } }
-
-// Shared layers that react to the kitchen in every groove.
-function alarms({ T, deg, chord, b16, at, step, bus }) {
-  if (mix.panic && b16 % 4 === 0) tone(hz(T.root + 24 + 1), step * 0.7, { type: 'square', vol: 0.03, at, bus });
-  if (mix.fire && b16 === 0) tone(700, step * 6, { type: 'triangle', vol: 0.05, slide: 1.5, at, bus });
-}
-
-const PLAY = {
-  // four on the floor, octave-jumping 8th bass, 16th ostinato (the original tune)
-  drive(a) {
-    const { T, deg, chord, b16, i, at, step, bus } = a;
-    if (b16 % 4 === 0) tone(62, 0.16, { vol: 0.34, slide: 0.4, at, bus });
-    if (b16 % 2 === 0) tone(hz(T.root - 24 + deg(chord) + (b16 % 4 === 2 ? 12 : 0)), step * 1.6, { type: 'sawtooth', vol: 0.11, at, bus });
-    if (b16 === 4 || b16 === 12) noise(0.13, { vol: 0.13, freq: 1900, q: 0.8, at, bus });
-    if (b16 % 2 === 1 || mix.level > 0.35) noise(0.03, { vol: b16 % 2 ? 0.05 : 0.03, freq: 9000, type: 'highpass', at, bus });
-    tone(hz(T.root + deg(chord + T.ost[b16])), step * 0.8, { type: T.lead, vol: 0.035 + mix.level * 0.02, at, bus });
-    if (mix.level > 0.3 && b16 % 2 === 0 && T.mel[i % 64] != null) tone(hz(T.root + 12 + deg(chord + T.mel[i % 64])), step * 1.5, { type: 'square', vol: 0.03 + mix.level * 0.025, at, bus });
-    alarms(a);
-  },
-  // swung 8ths, walking bass, clap backbeat, plucked melody
-  shuffle(a) {
-    const { T, deg, chord, b16, i, step, bus } = a;
-    if (b16 % 2) return;
-    const at = a.at + (b16 % 4 === 2 ? step * 0.34 : 0);
-    if (b16 === 0 || b16 === 10) tone(60, 0.18, { vol: 0.32, slide: 0.4, at, bus });
-    if (b16 === 4 || b16 === 12) { noise(0.09, { vol: 0.12, freq: 1400, q: 1.2, at, bus }); noise(0.07, { vol: 0.08, freq: 2200, q: 1, at: at + 0.012, bus }); }
-    noise(0.04, { vol: b16 % 4 ? 0.045 : 0.03, freq: 8000, type: 'highpass', at, bus });
-    if (b16 % 4 === 0) tone(hz(T.root - 24 + deg(chord + [0, 2, 4, 5][b16 / 4])), step * 3.4, { type: 'triangle', vol: 0.16, at, bus });
-    if (b16 % 8 === 0) for (const k of [0, 2, 4]) tone(hz(T.root + deg(chord + k)), step * 2.2, { type: 'triangle', vol: 0.025, at: at + step * 2, bus });
-    if (T.mel[i % 64] != null) tone(hz(T.root + 12 + deg(chord + T.mel[i % 64])), step * 1.4, { type: T.lead, vol: 0.03 + mix.level * 0.02, at, bus });
-    alarms(a);
-  },
-  // half-time: big kick on 1, snare on 3, long syncopated bass, rolling triangle arpeggio
-  halftime(a) {
-    const { T, deg, chord, b16, i, at, step, bus } = a;
-    if (b16 === 0 || b16 === 7) tone(55, 0.24, { vol: 0.38, slide: 0.35, at, bus });
-    if (b16 === 8) { noise(0.2, { vol: 0.16, freq: 1700, q: 0.7, at, bus }); tone(180, 0.1, { vol: 0.1, slide: 0.6, at, bus }); }
-    if (b16 % 2 === 0) noise(0.03, { vol: 0.035, freq: 10000, type: 'highpass', at, bus });
-    if (b16 === 0 || b16 === 6 || b16 === 11) tone(hz(T.root - 24 + deg(chord)), step * (b16 === 0 ? 5.5 : 3.5), { type: 'sawtooth', vol: 0.12, at, bus });
-    if (b16 % 2 === 0) tone(hz(T.root + 12 + deg(chord + [0, 2, 4, 6, 4, 2, 0, 2][b16 / 2])), step * 1.8, { type: 'triangle', vol: 0.035 + mix.level * 0.015, at, bus });
-    if (mix.level > 0.3 && b16 % 4 === 0 && T.mel[i % 64] != null) tone(hz(T.root + 12 + deg(chord + T.mel[i % 64])), step * 3, { type: T.lead, vol: 0.03 + mix.level * 0.02, at, bus });
-    alarms(a);
-  },
-  // gallop: tresillo kicks, galloping bass, staccato lead
-  gallop(a) {
-    const { T, deg, chord, b16, i, at, step, bus } = a;
-    if ([0, 3, 6, 8, 11, 14].includes(b16)) tone(64, 0.14, { vol: b16 % 8 === 0 ? 0.36 : 0.24, slide: 0.4, at, bus });
-    if (b16 === 4 || b16 === 12) noise(0.12, { vol: 0.13, freq: 2100, q: 0.8, at, bus });
-    if (b16 % 4 !== 1) tone(hz(T.root - 24 + deg(chord) + (b16 % 8 === 6 ? 7 : 0)), step * 0.8, { type: 'sawtooth', vol: 0.1, at, bus });
-    noise(0.025, { vol: 0.03, freq: 9500, type: 'highpass', at, bus });
-    if (b16 % 4 !== 3) tone(hz(T.root + 12 + deg(chord + T.ost[b16])), step * 0.45, { type: T.lead, vol: 0.03 + mix.level * 0.02, at, bus });
-    if (mix.level > 0.3 && b16 % 2 === 0 && T.mel[i % 64] != null) tone(hz(T.root + 24 + deg(chord + T.mel[i % 64])), step * 1.2, { type: 'triangle', vol: 0.03 + mix.level * 0.02, at, bus });
-    alarms(a);
-  },
-  // FINALE A: war drums, 16th pedal bass, dissonant pad, shimmering ostinato, ticking clock
-  war(a) {
-    const { T, deg, chord, b16, bar, i, at, step, bus } = a;
-    if (b16 % 4 === 0) tone(58, 0.2, { vol: 0.38, slide: 0.35, at, bus });
-    if ([3, 6, 10, 14].includes(b16)) tone(b16 === 14 ? 120 : 92, 0.18, { vol: 0.2, slide: 0.55, at, bus });
-    if (b16 === 4 || b16 === 12 || (bar === 3 && b16 >= 8)) noise(0.12, { vol: bar === 3 && b16 >= 8 ? 0.06 + (b16 - 8) * 0.012 : 0.14, freq: 2000, q: 0.8, at, bus });
-    noise(0.025, { vol: b16 % 2 ? 0.05 : 0.025, freq: 10000, type: 'highpass', at, bus });
-    tone(hz(T.root - 24 + deg(chord) + (b16 % 4 === 2 ? 12 : 0)), step * 0.85, { type: 'sawtooth', vol: 0.1, at, bus });
-    if (b16 === 0) { tone(hz(T.root + deg(chord)), step * 16, { type: 'sawtooth', vol: 0.03, at, bus }); tone(hz(T.root + deg(chord) + 1), step * 16, { type: 'sawtooth', vol: 0.022, at, bus }); tone(hz(T.root + 12 + deg(chord + 2)), step * 16, { type: 'triangle', vol: 0.03, at, bus }); }
-    const on = hz(T.root + 12 + deg(chord + T.ost[b16]));
-    tone(on, step * 0.7, { type: T.lead, vol: 0.04, at, bus });
-    tone(on * 1.006, step * 0.7, { type: 'square', vol: 0.018, at, bus });
-    if (b16 % 2 === 0 && T.mel[i % 64] != null) tone(hz(T.root + 12 + deg(chord + T.mel[i % 64])), step * 1.2, { type: 'sawtooth', vol: 0.045, at, bus });
-    if (b16 % 2 === 0) tone(b16 % 4 === 0 ? 2400 : 1800, 0.02, { type: 'square', vol: 0.045, at, bus });
-    if (bar === 3 && b16 === 0) noise(step * 16, { vol: 0.06, freq: 500, q: 2, sweep: 8, at, bus });
-    alarms(a);
-  },
-  // FINALE B: the chase. Breakbeat, up-down 16th arpeggio climbing each bar, siren lead
-  chase(a) {
-    const { T, deg, chord, b16, bar, i, at, step, bus } = a;
-    if (b16 === 0 || b16 === 10 || (b16 === 7 && bar % 2)) tone(60, 0.15, { vol: 0.36, slide: 0.4, at, bus });
-    if (b16 === 4 || b16 === 12) noise(0.13, { vol: 0.15, freq: 2000, q: 0.8, at, bus });
-    if ([2, 9, 14].includes(b16)) noise(0.05, { vol: 0.05, freq: 2300, q: 1, at, bus });
-    noise(0.02, { vol: 0.04, freq: 11000, type: 'highpass', at, bus });
-    tone(hz(T.root - 24 + deg(chord) + (b16 % 2 ? 12 : 0)), step * 0.7, { type: 'square', vol: 0.06, at, bus });
-    const arp = [0, 2, 4, 7, 4, 2][b16 % 6] + bar;
-    tone(hz(T.root + 12 + deg(chord + arp)), step * 0.6, { type: T.lead, vol: 0.04, at, bus });
-    if (b16 === 0 || b16 === 8) tone(hz(T.root + 24 + deg(chord + 4)), step * 7, { type: 'triangle', vol: 0.035, slide: 1.06, at, bus });
-    if (b16 % 4 === 2 && T.mel[i % 64] != null) tone(hz(T.root + 24 + deg(chord + T.mel[i % 64])), step * 1.4, { type: 'sawtooth', vol: 0.03, at, bus });
-    if (bar === 3 && b16 === 8) noise(step * 8, { vol: 0.07, freq: 600, q: 2, sweep: 6, at, bus });
-    alarms(a);
-  },
-};
-
-// ---- the lobby theme: a relaxed, hand-written tune in G major (I - vi - IV - V, then a bridge)
-const LOBBY = {
-  bpm: 104,
-  chords: [[55, 59, 62], [52, 55, 59], [48, 52, 55], [50, 54, 57], [55, 59, 62], [52, 55, 59], [48, 52, 55], [50, 54, 57],
-    [48, 52, 55], [50, 54, 57], [47, 50, 55], [52, 55, 59], [48, 52, 55], [50, 54, 57], [55, 59, 62], [50, 54, 57]],
-  // melody: one entry per 8th note (16 bars x 8), MIDI note or 0 for rest, - to hold
-  mel: [
-    74, 0, 71, 72, 74, '-', 79, '-', 76, '-', 74, 72, 71, '-', 0, 0, 72, 0, 69, 71, 72, '-', 76, '-', 74, '-', 72, 71, 69, '-', 0, 0,
-    74, 0, 71, 72, 74, '-', 79, '-', 81, '-', 79, 76, 74, '-', 0, 0, 72, 74, 76, 74, 72, '-', 71, '-', 69, '-', 66, '-', 67, '-', 0, 0,
-    76, '-', 72, '-', 67, '-', 72, 74, 74, '-', 69, '-', 66, '-', 69, 71, 71, '-', 67, '-', 62, '-', 67, 69, 71, '-', 72, '-', 74, '-', 76, '-',
-    76, '-', 72, '-', 69, 72, 76, 79, 78, '-', 74, '-', 69, 0, 74, 72, 71, '-', 74, '-', 79, '-', 0, 0, 74, '-', 72, '-', 71, '-', 69, '-',
-  ],
-};
-function lobbyMusic() {
-  const L = LOBBY, step = 60 / L.bpm / 4, bus = musicBus;
-  let i = 0, next = ctx.currentTime + 0.1;
-  const id = setInterval(() => {
-    while (next < ctx.currentTime + 0.2) {
-      const at = next - ctx.currentTime, b16 = i % 16, bar = Math.floor(i / 16) % 16, ch = L.chords[bar];
-      // soft brushed drums
-      if (b16 === 0 || b16 === 10) tone(58, 0.16, { vol: 0.2, slide: 0.5, at, bus });
-      if (b16 === 4 || b16 === 12) noise(0.12, { vol: 0.05, freq: 3000, q: 0.5, at, bus });
-      if (b16 % 2 === 0) noise(0.03, { vol: b16 % 4 ? 0.025 : 0.015, freq: 9000, type: 'highpass', at, bus });
-      // bass: root on 1, fifth on the and of 2, root again on 4
-      if (b16 === 0 || b16 === 12) tone(hz(ch[0] - 12), step * 3.5, { type: 'triangle', vol: 0.2, at, bus });
-      if (b16 === 6) tone(hz(ch[2] - 12), step * 2, { type: 'triangle', vol: 0.15, at, bus });
-      // comping chords on the offbeats, like a little electric piano
-      if (b16 === 2 || b16 === 8 || b16 === 14) ch.forEach((n) => tone(hz(n), step * 2.4, { type: 'sine', vol: 0.045, at, bus }));
-      // melody (8th notes, held notes tied)
-      if (b16 % 2 === 0) {
-        const k = (i / 2) % L.mel.length, n = L.mel[k];
-        if (n && n !== '-') {
-          let len = 1;
-          while (L.mel[(k + len) % L.mel.length] === '-') len++;
-          tone(hz(n), step * 2 * len * 0.95, { type: 'triangle', vol: 0.075, at, bus });
-          tone(hz(n + 12), step * 2 * len * 0.6, { type: 'sine', vol: 0.02, at, bus });
-        }
-      }
-      next += step; i++;
-    }
-  }, 40);
-  music = { id };
-}
+/** song titles per world, for the dev console */
+export const songList = () => Object.entries(SONGS).map(([w, l]) => `${w}: ${l.map((x, j) => `${j + 1} ${x.name}`).join(', ')}`).join('\n');
