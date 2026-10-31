@@ -19,7 +19,7 @@ const grid = (ws, hs, skip = []) => ({ cw: ws, rh: hs, cells: hs.flatMap((_, j) 
 export function planFor(wi, li, mp, r) {
   const P = (plan, extra = {}) => {
     Object.assign(plan, { gx: 1, gy: 1, shape: 'rect', inset: 0, drop: 0 }, extra);
-    if (wi && wi !== 3 && plan.cw.length >= 3 && plan.rh.length === 1) plan.gx = 1; // three across: keep the kitchen from getting too wide
+    if (wi && wi !== 3 && !plan.pods && plan.cw.length >= 3 && plan.rh.length === 1) plan.gx = 1; // three across: keep the kitchen from getting too wide
     return plan;
   };
   switch (wi) {
@@ -59,10 +59,23 @@ export function planFor(wi, li, mp, r) {
         stackTop([6, 7], 5, 5), grid([6, 6], [5, 5]), lLeft(7, 6, 5, 6), row([5, 6, 5], 10), grid([7, 6], [5, 6]),
       ][li], { gx: li >= 3 ? 2 : 1, gy: 2, shape: 'round', inset: li >= 1 ? 1 : 0, drop: li === 6 ? 1 : 0 });
     }
-    case 5: { // jungle: three or four small treehouse pods around the great tree
-      if (mp) return P(grid([7, 7], [6, 6]), { gx: 3, gy: 3, shape: 'rect', pods: true });
-      const plan = li >= 5 ? grid([6, 6], [6, 5]) : li % 2 ? stackTop([6, 6], 6, 5) : stackBot([6, 6], 6, 5);
-      return P(plan, { gx: 3, gy: 3, shape: 'rect', pods: true, podInset: li < 5 ? 1 : 0, drop: li === 6 || li === 8 ? 1 : 0 });
+    case 5: { // jungle: three or four small treehouse pods around the great tree, never the same twice
+      if (mp) return P(grid([10, 10], [7, 7]), { gx: 3, gy: 3, shape: 'rect', pods: true });
+      const a = r.int(5, 7), b = r.int(5, 7), h1 = r.int(5, 6), h2 = r.int(5, 6);
+      const three = [
+        () => [stackTop([a, b], h1, h2), { podInset: 1 }], () => [stackBot([a, b], h1, h2), { podInset: 1 }],
+        () => [row([6, 5, 6], r.int(6, 7)), {}], // three pods side by side, staggered up and down
+        () => [grid([a, b], [h1, h2], [r.int(0, 3)]), {}], // a 2x2 with one corner missing
+      ];
+      const four = [
+        () => [grid([a, b], [h1, h2]), { drop: r.chance(0.5) ? 1 : 0 }],
+        () => [grid([6, 5, 6], [6, 5], [2, 3]), {}], // a staircase of pods
+        () => [grid([6, 5, 6], [5, 6], [0, 5]), {}], // the other staircase
+        () => [grid([6, 5, 6], [6, 6], [3, 5]), {}], // a T: three across the back, one hanging below
+        () => [grid([6, 5, 6], [6, 6], [0, 2]), {}], // an upside-down T
+      ];
+      const [plan, extra] = r.pick(li < 3 ? three : li < 6 ? (r.chance(0.5) ? three : four) : four)();
+      return P(plan, { gx: plan.cw.length >= 3 ? 2 : 3, gy: 3, shape: 'rect', pods: true, jitter: true, ...extra });
     }
     case 6: { // factory: sections joined by conveyor shuttles (side to side) and catwalks (front to back)
       if (mp) return P(grid([8, 8], [6, 6]), { gx: 3, gy: 2, shape: 'rect' });
@@ -117,6 +130,22 @@ export function layOut(plan, r) {
     if (z.y1 - z.y0 >= 6 && free('bot') && r.chance(0.5)) z.y1 -= r.int(1, inset);
     if (z.x1 - z.x0 >= 6 && free('left') && r.chance(0.3)) z.x0 += 1;
     if (z.x1 - z.x0 >= 6 && free('right') && r.chance(0.3)) z.x1 -= 1;
+  }
+  // pods: each one shrinks a little and slides about inside its cell, so no two treehouses line up
+  if (plan.jitter) for (const z of zones) {
+    const sep = (q) => zones.every((o) => o === z || o.x0 - q.x1 - 1 >= gx || q.x0 - o.x1 - 1 >= gx || o.y0 - q.y1 - 1 >= gy || q.y0 - o.y1 - 1 >= gy)
+      // and linked neighbours stay within a short rope bridge of each other
+      && links.every((l) => { if (zones[l.a] !== z && zones[l.b] !== z) return true; const A = zones[l.a] === z ? q : zones[l.a], B = zones[l.b] === z ? q : zones[l.b]; return l.dir === 'x' ? B.x0 - A.x1 - 1 <= gx + 1 : B.y0 - A.y1 - 1 <= gy + 1; });
+    for (const [dx, dy] of r.shuffle(cw.length >= 3 ? [[0, 1], [0, -1], [0, 2], [0, -2]] : [[0, 1], [0, -1], [0, 2], [0, -2], [1, 0], [-1, 0]])) {
+      const q = { x0: z.x0 + dx, x1: z.x1 + dx, y0: z.y0 + dy, y1: z.y1 + dy };
+      if (r.chance(0.6) && sep(q)) { Object.assign(z, q); break; }
+    }
+    // and trim a row or column off a side, if that keeps the bridges short
+    for (const [k, d] of r.shuffle([['x0', 1], ['x1', -1], ['y0', 1], ['y1', -1]]).slice(0, 2)) {
+      const q = { x0: z.x0, x1: z.x1, y0: z.y0, y1: z.y1 };
+      q[k] += d;
+      if (q.x1 - q.x0 >= 5 && q.y1 - q.y0 >= 5 && sep(q)) Object.assign(z, q);
+    }
   }
   if (plan.podInset) for (const z of zones) if (z.c1 > z.c0) { z.x0 += 3; z.x1 -= 3; } // the wide pod shrinks to sit between the other two
   // normalise so the layout starts at 0,0

@@ -14,6 +14,11 @@ import { sfx, playMusic, setIntensity } from './audio.js';
 import { tileAt } from './levels.js';
 
 const SNAP_HZ = 20;
+// what falling off the kitchen sounds like in each world: [popup, sound]
+const FALL = {
+  pirate: ['Splash!', 'splash'], glacier: ['Brrr-plunge!', 'splash'], volcano: ['Sizzle!', 'sizzle'], space: ['Lost in space!', 'drift'],
+  clouds: ['Whoooosh!', 'whoosh'], jungle: ['Aaah-ah-aaah!', 'fall'], factory: ['Clang!', 'fall'], library: ['Tick... tock... drop!', 'fall'],
+};
 
 function skyTexture(top, bottom) {
   const c = document.createElement('canvas'); c.width = 4; c.height = 256;
@@ -49,7 +54,7 @@ export class Game {
     this.lastCount = null;
     this.buildScene();
     this.hud.startMatch(this);
-    playMusic(this.world.id, 124 + wi * 3);
+    playMusic(this.world.id, 124 + wi * 3, opts.level);
   }
 
   buildScene() {
@@ -333,8 +338,9 @@ export class Game {
       case 'dirty': break;
       case 'ko': {
         const pos = K.root.localToWorld(new THREE.Vector3(K.wx(e.x), 1.2, K.wz(e.y)));
-        if (e.why === 'fell') sfx.splash(); else sfx.ko();
-        hud.popup(pos, { fell: 'Splash!', cannon: 'Ka-BOOM!', embers: 'Scorched!', lightning: 'Zapped!', hazard: 'Ouch!', cuckoo: 'Cuckoo!' }[e.why] || 'Ouch!', 'bad');
+        const fall = FALL[this.world.id] || FALL.pirate;
+        if (e.why === 'fell') sfx[fall[1]](); else sfx.ko();
+        hud.popup(pos, { fell: fall[0], cannon: 'Ka-BOOM!', embers: 'Scorched!', lightning: 'Zapped!', hazard: 'Ouch!', cuckoo: 'Cuckoo!' }[e.why] || 'Ouch!', 'bad');
         if (e.pid === this.selfId) this.shake = 1;
         break;
       }

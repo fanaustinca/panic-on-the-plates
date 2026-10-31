@@ -161,6 +161,8 @@ export class Sim {
     this.ts = L.tiles.map(() => ({}));
     this.mv = (L.movers || []).map(() => ({ item: null }));
     this.players = roster.map((r, i) => newPlayer(L, r, i));
+    // a cooking perk speeds up every pan, pot and oven in the kitchen (the best one in the team counts)
+    this.cookMul = Math.max(1, ...this.players.map((p) => upgMul(p, 'cook')));
     this.party = partyOf(roster.length);
     this.maxOrders = Math.max(2, L.maxOrders + this.party.orders);
     this.orderGap = L.orderGap * this.party.gap;
@@ -439,7 +441,7 @@ export class Sim {
       if (!COOKERS[tl.st] || !s.item || s.item.kind !== 'ing' || s.fire || s.item.dead) continue;
       const it = s.item, m = INGREDIENTS[it.ing].method, cook = T.cook[m];
       const before = it.s;
-      it.p += dt * scale;
+      it.p += dt * scale * this.cookMul;
       if (it.p >= cook && it.s === 'chopped') it.s = 'cooked';
       if (it.p >= cook * T.burnAt[m] && it.s === 'cooked') it.s = 'burnt';
       if (it.s !== before) this.emit(it.s === 'cooked' ? 'cooked' : 'burnt', { x: tl.x, y: tl.y });

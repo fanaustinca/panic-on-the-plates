@@ -274,6 +274,25 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       // inside a clock tower: platforms on the works, a huge backlit dial, gears and a pendulum
       plane(0x140c08, -16, {});
       const gears = L ? clockIslands(g, L, r) : [];
+      // far below the platforms: the face of the great clock itself, lying flat, its hands sweeping
+      // round underneath the kitchen (the minute hand goes round once a minute)
+      {
+        const R = Math.max(W, H) * 0.85 + 4;
+        const face = new THREE.Group();
+        face.position.set(0, -8.5, 0);
+        face.add(part(new THREE.CircleGeometry(R, 72), new THREE.MeshStandardMaterial({ map: dialTex(), color: 0x7a5a3a, roughness: 0.7 }), [0, 0, 0], 1, [-Math.PI / 2, 0, Math.PI]));
+        face.add(part(new THREE.TorusGeometry(R + 0.3, 0.5, 10, 96), mat(0xc8964a, { metal: 0.85, rough: 0.32 }), [0, 0, 0], 1, [Math.PI / 2, 0, 0]));
+        const handM = mat(0x1a120c, { metal: 0.6, rough: 0.4 });
+        const mk = (len, wid) => { const hg = new THREE.Group(); hg.add(part(box(), handM, [0, 0.15, -len / 2], [wid, 0.12, len])); hg.add(part(box(), handM, [0, 0.15, -len], [wid * 2.2, 0.12, wid * 2.2], [0, Math.PI / 4, 0])); face.add(hg); return hg; };
+        const minH = mk(R * 0.82, 0.7), hourH = mk(R * 0.55, 1.1), secH = mk(R * 0.9, 0.18);
+        face.add(part(cyl(24), mat(0xc8964a, { metal: 0.85, rough: 0.32 }), [0, 0.25, 0], [1.2, 0.3, 1.2]));
+        g.add(face);
+        updaters.push((t) => { secH.rotation.y = -Math.floor(t) * Math.PI / 30; minH.rotation.y = -t * Math.PI / 300 - 0.6; hourH.rotation.y = -t * Math.PI / 3600 - 2; });
+        // a faint warm glow pooled on the face
+        const fl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0xffa040, transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending }));
+        fl.scale.setScalar(R * 1.6); fl.position.set(0, -8, 0);
+        g.add(fl);
+      }
       updaters.push((t) => gears.forEach((gr, i) => { gr.rotation.y = t * (i % 2 ? -0.12 : 0.15); }));
       const brass = mat(0xc8964a, { metal: 0.85, rough: 0.32 }), brassD = mat(0x8a6430, { metal: 0.8, rough: 0.4 }), iron = mat(0x3a3a3e, { metal: 0.8, rough: 0.4 });
       const zb = -H / 2;
@@ -293,8 +312,7 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       updaters.push((t) => { minH.rotation.z = -t * Math.PI * 2 / 60; hourH.rotation.z = -t * Math.PI * 2 / 720 - 1.2; });
       // giant gears turning in the walls and the depths
       const big = [];
-      for (const [x, y, z, R, axis, sp] of [[-W / 2 - 5, 1, zb - 3, 4.2, 'z', 0.1], [-W / 2 - 1.5, -3.5, zb - 4.5, 2.6, 'z', -0.16], [W / 2 + 5, 2.5, zb - 2.5, 3.6, 'z', -0.12], [W / 2 + 2.2, -2.4, zb - 4.6, 2.2, 'z', 0.2],
-        [-W / 4, -7, 0, 5, 'y', 0.05], [W / 3, -9, 2, 4, 'y', -0.07], [0, -12, -4, 6.5, 'y', 0.03]]) {
+      for (const [x, y, z, R, axis, sp] of [[-W / 2 - 5, 1, zb - 3, 4.2, 'z', 0.1], [-W / 2 - 1.5, -3.5, zb - 4.5, 2.6, 'z', -0.16], [W / 2 + 5, 2.5, zb - 2.5, 3.6, 'z', -0.12], [W / 2 + 2.2, -2.4, zb - 4.6, 2.2, 'z', 0.2]]) {
         const gr = makeGear(R, Math.round(R * 8), 0.4, r() < 0.5 ? brass : brassD, 6);
         gr.position.set(x, y, z);
         if (axis === 'z') gr.rotation.x = Math.PI / 2;
@@ -305,8 +323,8 @@ export function buildBackdrop(worldId, W, H, sky, L = null) {
       // the pendulum swinging far below the kitchen
       const pend = new THREE.Group();
       pend.position.set(0, 2, zb - 2);
-      pend.add(part(box(), brassD, [0, -9, 0], [0.18, 18, 0.18]));
-      pend.add(part(cyl(40), brass, [0, -18.5, 0], [2.2, 0.5, 2.2], [Math.PI / 2, 0, 0]));
+      pend.add(part(box(), brassD, [0, -4.5, 0], [0.16, 9, 0.16]));
+      pend.add(part(cyl(40), brass, [0, -9.2, 0], [1.6, 0.4, 1.6], [Math.PI / 2, 0, 0]));
       g.add(pend);
       updaters.push((t) => { pend.rotation.z = Math.sin(t * Math.PI * 2 / 4) * 0.32; });
       // hanging weights on chains, and the tower walls in the gloom

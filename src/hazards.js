@@ -127,6 +127,23 @@ export function blockedAt(L, x, y, t) {
   return false;
 }
 
+// ---- clock-tower hands: pivot in a gap and turn a quarter at a time, always clockwise.
+// Each period: across the gap (a bridge), swing, lying along the gap, swing on round to across again.
+const ease = (k) => k * k * (3 - 2 * k);
+export function handAngle(h, t) {
+  const c = t / h.period + h.phase, n = Math.floor(c), f = c - n;
+  const s = f < 0.4 ? 0 : f < 0.5 ? ease((f - 0.4) / 0.1) : f < 0.9 ? 1 : 1 + ease((f - 0.9) / 0.1);
+  return (2 * n + s) * Math.PI / 2 + (h.axis === 'y' ? Math.PI / 2 : 0);
+}
+/** About to swing (the hub lamp flashes). */
+export function handWarn(h, t) { const f = (((t / h.period + h.phase) % 1) + 1) % 1; return (f > 0.32 && f < 0.4) || (f > 0.82 && f < 0.9); }
+function handHit(h, px, py, t) {
+  const a = handAngle(h, t), w = (handAngle(h, t + 0.01) - handAngle(h, t - 0.01)) / 0.02;
+  const dx = px - h.x, dy = py - h.y, c = Math.cos(a), s = Math.sin(a);
+  if (Math.abs(dx * c + dy * s) > h.len / 2 || Math.abs(-dx * s + dy * c) > h.w / 2) return null;
+  return { ok: true, vx: -w * dy, vy: w * dx, hand: true };
+}
+
 /** Ground support under a point (tile units) at time t: returns { ok, vx, vy } (carry velocity). */
 export function supportAt(L, px, py, t) {
   for (const f of L.floes) {
@@ -135,6 +152,7 @@ export function supportAt(L, px, py, t) {
   }
   const x = Math.floor(px), y = Math.floor(py);
   const tl = tileAt(L, x, y);
+  if (L.hands && (!tl || tl.k === 'void')) for (const h of L.hands) { const q = handHit(h, px, py, t); if (q) return q; }
   if (!tl) return { ok: false };
   if (tl.k === 'floor') {
     if (holeAt(L, x, y, t)) return { ok: false };

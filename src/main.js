@@ -8,7 +8,8 @@ import { Game } from './game.js';
 import { UI } from './ui.js';
 import { Input } from './input.js';
 import { LobbyScene } from './render/lobby3d.js';
-import { loadSave, writeSave, recordResult, levelUnlocked, outfitUnlocked, buyUpgrade } from './save.js';
+import { installDev } from './dev.js';
+import { loadSave, writeSave, recordResult, levelUnlocked, outfitUnlocked, openBox, skipLevel } from './save.js';
 import { initAudio, setVolumes, playMusic, stopMusic, sfx } from './audio.js';
 
 class App {
@@ -64,7 +65,7 @@ class App {
 
   frame(dt, hidden = false) {
     this.rt += dt;
-    if (this.game) this.game.update(dt, this.rt, hidden);
+    if (this.game) this.game.update(dt * (this.devSpeed || 1), this.rt, hidden);
     else if (hidden) return;
     else this.lobby3d.render(dt, this.rt);
   }
@@ -113,12 +114,13 @@ class App {
   }
   previewWorld(wi) { this.lobby3d.setTheme(wi); }
 
-  buy(id) {
-    if (!buyUpgrade(this.save, id)) return false;
-    sfx.star(2);
-    this.setProfile({ upg: cleanUpg(this.save.upg) });
-    return true;
+  /** Buy and open a gift box; returns what was inside (or null if you cannot afford it). */
+  openGift(id, free = false) {
+    const res = openBox(this.save, id, Math.random, free);
+    if (res && this.me()) this.setProfile({ upg: cleanUpg(this.save.upg) });
+    return res;
   }
+  skipLevel(key) { skipLevel(this.save, key); }
 
   /** Multiplayer: every cook's world vote (null = no vote). */
   worldVotes() { return this.memberList().map((m, i) => ({ id: m.id, name: m.name, slot: i, world: m.vote != null && /^\d$/.test(String(m.vote)) ? +m.vote : null })); }
@@ -316,6 +318,8 @@ class App {
       onReplay: () => this.startMatch(res.level),
       onLobby: () => { if (this.room) this.room.broadcast({ k: 'tolobby' }); this.backToLobby(); },
       onLeave: () => this.leave(),
+      // solo, no stars: a (placeholder) ad skips the level and opens the next one
+      onSkip: !this.room && res.stars === 0 && nextKey ? () => { skipLevel(this.save, res.level); this.startMatch(nextKey); } : null,
     });
     this.lastResult = res;
   }
@@ -358,3 +362,4 @@ class App {
 const app = new App();
 // test / debug hooks
 window.PANIC = { app, ready: true, local: isLocalNet(), game: null, finalState };
+window.dev = installDev(app);

@@ -163,8 +163,16 @@ export const treehouse = {
   makePods() {
     const L = this.L;
     // the great tree stands where the gaps between the pods cross
-    const gx = L.gaps.find((g) => g.dir === 'x'), gy = L.gaps.find((g) => g.dir === 'y');
-    this.trunkAt = V(gx ? this.wx(gx.x0) + (gx.x1 - gx.x0 + 1) / 2 : 0, 0, gy ? this.wz(gy.y0) + (gy.y1 - gy.y0 + 1) / 2 : this.wz(0) - 1.5);
+    // (the open spot nearest the middle where a side-to-side gap and a front-to-back gap cross)
+    const xs = L.gaps.filter((g) => g.dir === 'x').map((g) => this.wx(g.x0) + (g.x1 - g.x0 + 1) / 2);
+    const zs = L.gaps.filter((g) => g.dir === 'y').map((g) => this.wz(g.y0) + (g.y1 - g.y0 + 1) / 2);
+    if (!xs.length) xs.push(0);
+    if (!zs.length) zs.push(this.wz(0) - 1.5);
+    const clear = (x, z) => L.zones.every((q) => x < this.wx(q.x0) - 1.2 || x > this.wx(q.x1 + 1) + 1.2 || z < this.wz(q.y0) - 1.2 || z > this.wz(q.y1 + 1) + 1.2);
+    const spots = xs.flatMap((x) => zs.map((z) => [x, z]));
+    const ok = spots.filter(([x, z]) => clear(x, z));
+    const [tx, tz] = (ok.length ? ok : spots).sort((a, b) => Math.hypot(...a) - Math.hypot(...b))[0];
+    this.trunkAt = V(tx, 0, tz);
     const heights = [0.12, 0.42, -0.14, 0.28];
     this.pods = L.zones.map((z, i) => {
       const g = new THREE.Group();

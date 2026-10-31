@@ -14,6 +14,28 @@ const OUTFIT = {
   explorer: { body: 0xc8b07a, pants: 0x8a7a50, belt: 0x5a3a1a },
   welder: { body: 0x3a5a7a, pants: 0x2a3a4a, apron: 0x6a4a2a },
   wizard: { body: 0x6a4228, pants: 0x2a1e18, robe: true },
+  // ---- gift-box outfits
+  diner: { body: 0x3ab0a8, pants: 0x2a2d36, accentApron: true, hat: 'cap', hatC: 0xffffff },
+  baker: { body: 0xf4e8d0, pants: 0x8a6a4a, apron: 0xffffff, hat: 'beret', hatC: 0xffffff },
+  linecook: { body: 0x2a2c32, pants: 0x1a1a1e, accentApron: true, hat: 'bandana' },
+  barista: { body: 0x7a5a44, pants: 0x2a2a30, apron: 0x2a6a4a, hat: 'beret', hatC: 0x2a2226 },
+  lunchlady: { body: 0xf28ab0, pants: 0x4a4a5a, apron: 0xffffff, hat: 'hairnet' },
+  sous: { body: 0xdfe3ea, pants: 0x2a2d36, accentApron: true, hat: 'toque' },
+  cowboy: { body: 0xb07a4a, pants: 0x3a4a6a, belt: 0x3a2412, hat: 'cowboy', hatC: 0x8a5a2a },
+  sushi: { body: 0xf6f6f2, pants: 0x1a1a22, stripes: 0x1a1a22, hat: 'headband' },
+  ninja: { body: 0x1c1c24, pants: 0x1c1c24, belt: 0x8a1a1a, hat: 'ninja', gloves: 0x1c1c24 },
+  viking: { body: 0x6a4a2a, pants: 0x4a3a2a, fur: 0xd8c8a8, belt: 0x2a1a0e, hat: 'viking' },
+  knight: { body: 0xb8c0c8, pants: 0x8a929a, metal: true, hat: 'knight', gloves: 0x9aa2aa },
+  royal: { body: 0x6a2a8a, pants: 0x2a1a3a, cape: 0xc02a3a, fur: 0xfff8f0, hat: 'crown' },
+  robo: { body: 0xa8b4c0, pants: 0x6a7480, metal: true, hat: 'robo', gloves: 0x6a7480 },
+  witch: { body: 0x3a2a5a, pants: 0x1a1a2a, robe: true, hat: 'witch' },
+  dragon: { body: 0x3a9a4a, pants: 0x2a6a3a, spikes: 0xf2c84a, hat: 'dragon', gloves: 0x3a9a4a },
+  ghost: { body: 0xeef2ff, pants: 0xeef2ff, robe: true, ghost: true, hat: 'halo' },
+  // ---- chroma: animated
+  prism: { body: 0xffffff, pants: 0x2a2d36, chroma: 'prism', hat: 'chefC' },
+  galaxy: { body: 0x1a1440, pants: 0x0e0a24, chroma: 'galaxy', hat: 'chefC', cape: 0x2a1a6a },
+  golden: { body: 0xffc83a, pants: 0xb8862a, metal: true, chroma: 'golden', hat: 'crown', cape: 0xc02a3a },
+  neon: { body: 0x14141c, pants: 0x14141c, chroma: 'neon', stripes: 0x00ffd0, hat: 'cap', hatC: 0x14141c },
 };
 export const OUTFIT_IDS = Object.keys(OUTFIT);
 const SKIN = [0xf2c8a0, 0xd9a07a, 0xa86e48, 0x6e4a32];
@@ -44,13 +66,23 @@ export class Chef {
   build(outfitId, color, skinIdx) {
     const O = OUTFIT[outfitId] || OUTFIT.chef;
     const body = this.body;
-    const B = mat(O.body, { rough: O.metal ? 0.25 : 0.6, metal: O.metal ? 0.7 : 0 });
+    this.chroma = null;
+    let B = mat(O.body, { rough: O.metal ? 0.25 : 0.6, metal: O.metal ? 0.7 : 0, opacity: O.ghost ? 0.62 : undefined });
+    if (O.chroma) {
+      // chroma outfits own their materials: they shimmer and cycle colour every frame (see animate)
+      B = new THREE.MeshStandardMaterial({ color: O.body, roughness: O.metal ? 0.22 : 0.4, metalness: O.metal ? 0.85 : 0.1, emissive: O.chroma === 'golden' ? 0x6a4000 : 0x000000 });
+      this.chroma = { kind: O.chroma, mats: [B] };
+    }
     const skin = mat(SKIN[skinIdx % SKIN.length], { rough: 0.6 });
     const acc = mat(color, { rough: 0.5 });
     // torso
     if (O.robe) body.add(part(cone(20), B, [0, 0.36, 0], [0.27, 0.62, 0.26]));
     else body.add(part(capsule(), B, [0, 0.42, 0], O.puffy ? [0.52, 0.36, 0.46] : [0.46, 0.34, 0.4]));
-    if (O.stripes) for (let i = 0; i < 3; i++) body.add(part(tor(), mat(O.stripes), [0, 0.3 + i * 0.1, 0], [0.225, 0.2, 0.12], [Math.PI / 2, 0, 0]));
+    const stripeM = O.chroma === 'neon' ? new THREE.MeshStandardMaterial({ color: O.stripes, emissive: O.stripes, emissiveIntensity: 1.6 }) : O.stripes != null ? mat(O.stripes) : null;
+    if (stripeM && O.chroma) this.chroma.mats.push(stripeM);
+    if (O.stripes != null) for (let i = 0; i < 3; i++) body.add(part(tor(), stripeM, [0, 0.3 + i * 0.1, 0], [0.225, 0.2, 0.12], [Math.PI / 2, 0, 0]));
+    if (O.cape) body.add(part(box(), mat(O.cape, { rough: 0.7 }), [0, 0.36, -0.22], [0.42, 0.5, 0.03], [0.12, 0, 0]));
+    if (O.spikes) for (let i = 0; i < 4; i++) body.add(part(cone(8), mat(O.spikes, { rough: 0.5 }), [0, 0.68 - i * 0.12, -0.2 - (i === 0 ? 0 : 0.02)], [0.05, 0.1, 0.05], [-1.2, 0, 0]));
     if (O.accentApron) {
       body.add(part(box(), acc, [0, 0.33, 0.19], [0.3, 0.32, 0.03]));
       body.add(part(box(), acc, [0, 0.47, 0.17], [0.42, 0.04, 0.05]));
@@ -86,7 +118,7 @@ export class Chef {
     head.add(part(box(), mat(0x6a2a2a), [0, -0.09, 0.17], [0.07, 0.015, 0.01]));
     this.buildHat(outfitId, head, color, O);
     // hands and feet
-    const handM = outfitId === 'heatsuit' || outfitId === 'spacesuit' || outfitId === 'welder' ? mat(outfitId === 'welder' ? 0x8a5a2a : 0xe8e8ee) : outfitId === 'parka' ? mat(color) : skin;
+    const handM = O.gloves != null ? mat(O.gloves, { metal: O.metal ? 0.7 : 0, rough: 0.5 }) : O.ghost ? B : outfitId === 'heatsuit' || outfitId === 'spacesuit' || outfitId === 'welder' ? mat(outfitId === 'welder' ? 0x8a5a2a : 0xe8e8ee) : outfitId === 'parka' ? mat(color) : skin;
     this.handL = new THREE.Group(); this.handR = new THREE.Group();
     this.handL.add(part(sph(12), handM, [0, 0, 0], 0.075)); this.handR.add(part(sph(12), handM, [0, 0, 0], 0.075));
     this.root.add(this.handL, this.handR);
@@ -103,7 +135,103 @@ export class Chef {
   buildHat(id, head, color, O) {
     const add = (...a) => head.add(part(...a));
     const W = mat(0xffffff, { rough: 0.7 });
-    switch (id) {
+    switch (O.hat || id) {
+      case 'chefC': {
+        // a chroma toque: owns its material so it cycles with the outfit
+        const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, emissive: 0x000000 });
+        this.chroma.mats.push(m);
+        add(cyl(20), m, [0, 0.19, 0], [0.16, 0.12, 0.16]);
+        for (let i = 0; i < 5; i++) add(sph(14), m, [Math.cos(i * 1.256) * 0.1, 0.31, Math.sin(i * 1.256) * 0.1], 0.1);
+        add(sph(14), m, [0, 0.34, 0], 0.12);
+        break;
+      }
+      case 'toque':
+        add(cyl(20), W, [0, 0.17, 0], [0.165, 0.1, 0.165]);
+        add(sph(14), W, [0, 0.25, 0], [0.18, 0.08, 0.18]);
+        break;
+      case 'cap': {
+        const C = O.chroma === 'neon' ? new THREE.MeshStandardMaterial({ color: 0x00ffd0, emissive: 0x00ffd0, emissiveIntensity: 1.4 }) : mat(O.hatC, { rough: 0.6 });
+        if (O.chroma) this.chroma.mats.push(C);
+        add(box(), C, [0, 0.19, 0], [0.34, 0.08, 0.2]);
+        add(box(), C, [0, 0.235, 0], [0.3, 0.04, 0.05]);
+        if (!O.chroma) add(box(), mat(color), [0, 0.165, 0], [0.345, 0.025, 0.205]);
+        break;
+      }
+      case 'beret':
+        add(sph(18), mat(O.hatC, { rough: 0.8 }), [0.03, 0.16, -0.02], [0.23, 0.07, 0.22], [0, 0, -0.2]);
+        add(sph(8), mat(O.hatC), [0.03, 0.23, -0.02], 0.025);
+        break;
+      case 'bandana':
+        add(sph(18), mat(color, { rough: 0.8 }), [0, 0.06, -0.01], [0.205, 0.16, 0.2]);
+        add(sph(8), mat(color, { rough: 0.8 }), [0, 0.0, -0.21], [0.06, 0.05, 0.05]);
+        break;
+      case 'hairnet':
+        add(sph(18), mat(0xffffff, { rough: 0.6, opacity: 0.55 }), [0, 0.07, -0.01], [0.215, 0.17, 0.21]);
+        break;
+      case 'cowboy': {
+        const H = mat(O.hatC, { rough: 0.8 });
+        add(cyl(24), H, [0, 0.13, 0], [0.34, 0.02, 0.34]);
+        add(sph(16), H, [0, 0.2, 0], [0.18, 0.14, 0.17]);
+        add(cyl(20), mat(0x3a2412), [0, 0.15, 0], [0.185, 0.03, 0.175]);
+        for (const sx of [-1, 1]) add(box(), H, [sx * 0.3, 0.17, 0], [0.08, 0.02, 0.4], [0, 0, sx * 0.5]);
+        break;
+      }
+      case 'headband':
+        add(cyl(20), mat(0xffffff, { rough: 0.7 }), [0, 0.09, 0], [0.205, 0.05, 0.2]);
+        add(sph(10), mat(0xd82a2a), [0, 0.09, 0.2], [0.035, 0.035, 0.01]);
+        add(sph(14), mat(0x1a1a1a, { rough: 0.6 }), [0, 0.15, -0.02], [0.19, 0.1, 0.18]);
+        break;
+      case 'ninja':
+        add(sph(20), mat(0x1c1c24, { rough: 0.7 }), [0, 0.02, -0.02], [0.215, 0.205, 0.21]);
+        add(box(), mat(0x1c1c24), [0, -0.07, 0.16], [0.3, 0.1, 0.06]);
+        add(box(), mat(color), [0, 0.12, 0.05], [0.42, 0.03, 0.3]);
+        add(box(), mat(color), [-0.06, 0.1, -0.22], [0.04, 0.03, 0.16], [0.5, 0.3, 0]);
+        break;
+      case 'viking': {
+        const steel = mat(0x9aa2aa, { metal: 0.8, rough: 0.3 });
+        add(sph(20), steel, [0, 0.07, -0.01], [0.22, 0.18, 0.21]);
+        add(cyl(20), mat(0x6a4a2a), [0, 0.04, 0], [0.225, 0.04, 0.215]);
+        for (const sx of [-1, 1]) add(cone(10), mat(0xf4ecd8, { rough: 0.5 }), [sx * 0.24, 0.17, 0], [0.05, 0.2, 0.05], [0, 0, -sx * 0.9]);
+        add(sph(12), mat(0xd88a3a, { rough: 0.9 }), [0, -0.14, 0.15], [0.14, 0.09, 0.08]);
+        break;
+      }
+      case 'knight': {
+        const steel = mat(0xb8c0c8, { metal: 0.85, rough: 0.25 });
+        add(cyl(20), steel, [0, 0.03, 0], [0.235, 0.36, 0.235]);
+        add(box(), mat(0x1a1a1a), [0, 0.04, 0.22], [0.26, 0.035, 0.02]);
+        add(box(), mat(0x1a1a1a), [0, -0.04, 0.22], [0.035, 0.12, 0.02]);
+        add(sph(10), mat(color, { rough: 0.8 }), [0, 0.3, -0.04], [0.06, 0.12, 0.16]);
+        break;
+      }
+      case 'crown': {
+        const gold = mat(0xffd040, { metal: 0.9, rough: 0.2 });
+        add(cyl(20, 0.5), gold, [0, 0.19, 0], [0.17, 0.09, 0.17]);
+        for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; add(cone(6), gold, [Math.cos(a) * 0.15, 0.27, Math.sin(a) * 0.15], [0.03, 0.08, 0.03]); }
+        for (let i = 0; i < 3; i++) { const a = i * 2.1 + 0.4; add(sph(8), mat([0xd82a3a, 0x2a8ad8, 0x2ad86a][i], { rough: 0.1 }), [Math.cos(a) * 0.17, 0.19, Math.sin(a) * 0.17], 0.025); }
+        break;
+      }
+      case 'robo': {
+        const steel = mat(0xa8b4c0, { metal: 0.85, rough: 0.25 });
+        add(box(), steel, [0, 0.02, 0], [0.4, 0.36, 0.36]);
+        add(box(), new THREE.MeshStandardMaterial({ color: 0x0a1a2a, emissive: 0x2ad8ff, emissiveIntensity: 0.8 }), [0, 0.04, 0.18], [0.3, 0.1, 0.02]);
+        add(cyl(8), steel, [0, 0.27, 0], [0.012, 0.16, 0.012]);
+        add(sph(8), new THREE.MeshStandardMaterial({ color: 0xff3a3a, emissive: 0xff2020, emissiveIntensity: 1.5 }), [0, 0.36, 0], 0.035);
+        break;
+      }
+      case 'witch': {
+        const H = mat(0x2a1a3a, { rough: 0.7 });
+        add(cyl(24), H, [0, 0.13, 0], [0.34, 0.02, 0.34]);
+        add(cone(20), H, [0.02, 0.36, -0.03], [0.17, 0.46, 0.17], [-0.15, 0, 0.1]);
+        add(cyl(20), mat(0x8a3ad8), [0, 0.17, 0], [0.175, 0.04, 0.175]);
+        break;
+      }
+      case 'dragon':
+        for (const sx of [-1, 1]) add(cone(10), mat(0xf2e8c8, { rough: 0.5 }), [sx * 0.11, 0.2, -0.04], [0.04, 0.16, 0.04], [-0.4, 0, -sx * 0.3]);
+        add(cone(8), mat(O.spikes), [0, 0.2, -0.1], [0.04, 0.1, 0.04], [-0.8, 0, 0]);
+        break;
+      case 'halo':
+        add(new THREE.TorusGeometry(0.15, 0.022, 8, 32), new THREE.MeshStandardMaterial({ color: 0xfff0a0, emissive: 0xffd040, emissiveIntensity: 1.6 }), [0, 0.32, 0], 1, [Math.PI / 2, 0, 0]);
+        break;
       case 'chef':
         add(cyl(20), W, [0, 0.19, 0], [0.16, 0.12, 0.16]);
         for (let i = 0; i < 5; i++) add(sph(14), W, [Math.cos(i * 1.256) * 0.1, 0.31, Math.sin(i * 1.256) * 0.1], 0.1);
@@ -268,5 +396,19 @@ export class Chef {
     const blink = this.blinkT < 0.12 ? 0.1 : 1;
     if (this.blinkT < 0) this.blinkT = 2 + Math.random() * 3.5;
     this.eyes.forEach((e) => { e.scale.y = blink; });
+    if (this.chroma) this.shimmer(s.t);
+  }
+
+  /** Chroma outfits: colour that never sits still. */
+  shimmer(t) {
+    const { kind, mats } = this.chroma;
+    mats.forEach((m, k) => {
+      if (kind === 'neon' && k === 0) return; // the suit stays black, the trims glow
+      const h = (t * 0.18 + k * 0.17) % 1;
+      if (kind === 'prism') { m.color.setHSL(h, 0.8, 0.62); m.emissive.setHSL(h, 0.9, 0.18); }
+      else if (kind === 'galaxy') m.emissive.setHSL((0.62 + Math.sin(t * 0.7 + k) * 0.12 + 1) % 1, 0.9, 0.22 + Math.sin(t * 2.3 + k) * 0.06);
+      else if (kind === 'golden') { m.emissiveIntensity = 0.5 + Math.sin(t * 3 + k) * 0.35; }
+      else if (kind === 'neon') m.emissive.setHSL(h, 1, 0.5), m.color.copy(m.emissive);
+    });
   }
 }

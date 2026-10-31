@@ -98,7 +98,7 @@ export const WORLDS = [
       'Gear-Corn Roast', 'Torque & Beans', 'Quality Control Combo', 'Heavy Metal Bake', 'Production Line Feast'],
   },
   {
-    id: 'library', name: 'Clock Tower', blurb: 'Turning gears, time warps and the cuckoo.',
+    id: 'library', name: 'Clock Tower', blurb: 'Swinging clock hands, time warps and the cuckoo.',
     outfit: 'wizard', sky: 0x241810, fog: 0x3a2818, floor: 'clockfloor', wall: 'clockwall', voidKind: 'abyss',
     ingredients: [
       { id: 'spellsugar', name: 'Tick-Tock Sugar', method: 'chop', shape: 'crystal', c1: 0xff9ae0, c2: 0xffe0f6, c3: 0xc06ad9 },
@@ -137,17 +137,68 @@ WORLDS.forEach((w, wi) => w.ingredients.forEach((ing, k) => { INGREDIENTS[ing.id
 /** The finished state an ingredient must reach before it can go on a plate for a recipe. */
 export const finalState = (ingId) => (INGREDIENTS[ingId].method === 'chop' ? 'chopped' : 'cooked');
 
-// Outfits: the classic chef plus one mod per world (unlocked by clearing that world's level 1).
+// ---------------------------------------------------------------- outfits (skins)
+// Five tiers, common to chroma. Every outfit gives its cook a perk, bigger the rarer it is; chroma
+// outfits give two. The classic whites are free, each world's outfit is earned by clearing that
+// world's level 1, and the rest come out of gift boxes.
+export const TIERS = [
+  { id: 'common', name: 'Common', color: '#a8b4c0', amt: 0.04 },
+  { id: 'rare', name: 'Rare', color: '#3d9bff', amt: 0.08 },
+  { id: 'epic', name: 'Epic', color: '#b065f0', amt: 0.12 },
+  { id: 'legendary', name: 'Legendary', color: '#ffb21a', amt: 0.17 },
+  { id: 'chroma', name: 'Chroma', color: '#ff5ad8', amt: 0.22 },
+];
+export const PERKS = {
+  speed: 'walk speed', chop: 'chopping', cook: 'cooking (whole kitchen)', wash: 'washing', jump: 'jump height', spray: 'hose power', recover: 'faster respawn',
+};
 export const OUTFITS = [
-  { id: 'chef', name: 'Classic Whites', world: -1 },
-  { id: 'pirate', name: 'Pirate Outfit', world: 0 },
-  { id: 'parka', name: 'Winter Parka', world: 1 },
-  { id: 'heatsuit', name: 'Heat-Resistant Suit', world: 2 },
-  { id: 'spacesuit', name: 'Space Suit', world: 3 },
-  { id: 'aviator', name: 'Aviator Gear', world: 4 },
-  { id: 'explorer', name: 'Explorer Outfit', world: 5 },
-  { id: 'welder', name: 'Welding Gear', world: 6 },
-  { id: 'wizard', name: 'Clockmaker Gear', world: 7 },
+  { id: 'chef', name: 'Classic Whites', tier: 0, perks: ['wash'], world: -1 },
+  { id: 'diner', name: 'Diner Cook', tier: 0, perks: ['chop'] },
+  { id: 'baker', name: 'Baker', tier: 0, perks: ['cook'] },
+  { id: 'linecook', name: 'Line Cook', tier: 0, perks: ['speed'] },
+  { id: 'barista', name: 'Barista', tier: 0, perks: ['wash'] },
+  { id: 'lunchlady', name: 'Lunch Crew', tier: 0, perks: ['recover'] },
+  { id: 'sous', name: 'Sous Chef', tier: 0, perks: ['spray'] },
+  { id: 'pirate', name: 'Pirate Outfit', tier: 1, perks: ['speed'], world: 0 },
+  { id: 'parka', name: 'Winter Parka', tier: 1, perks: ['spray'], world: 1 },
+  { id: 'heatsuit', name: 'Heat-Resistant Suit', tier: 1, perks: ['cook'], world: 2 },
+  { id: 'explorer', name: 'Explorer Outfit', tier: 1, perks: ['jump'], world: 5 },
+  { id: 'welder', name: 'Welding Gear', tier: 1, perks: ['chop'], world: 6 },
+  { id: 'cowboy', name: 'Chuckwagon Cowpoke', tier: 1, perks: ['speed'] },
+  { id: 'sushi', name: 'Sushi Master', tier: 1, perks: ['chop'] },
+  { id: 'spacesuit', name: 'Space Suit', tier: 2, perks: ['jump'], world: 3 },
+  { id: 'aviator', name: 'Aviator Gear', tier: 2, perks: ['speed'], world: 4 },
+  { id: 'wizard', name: 'Clockmaker Gear', tier: 2, perks: ['cook'], world: 7 },
+  { id: 'ninja', name: 'Shadow Ninja', tier: 2, perks: ['speed'] },
+  { id: 'viking', name: 'Viking Raider', tier: 2, perks: ['recover'] },
+  { id: 'knight', name: 'Iron Knight', tier: 2, perks: ['spray'] },
+  { id: 'royal', name: 'Royal Chef', tier: 3, perks: ['cook'] },
+  { id: 'robo', name: 'Robo-Chef 3000', tier: 3, perks: ['chop'] },
+  { id: 'witch', name: 'Cauldron Witch', tier: 3, perks: ['wash'] },
+  { id: 'dragon', name: 'Dragon Cook', tier: 3, perks: ['spray'] },
+  { id: 'ghost', name: 'Ghost Chef', tier: 3, perks: ['jump'] },
+  { id: 'prism', name: 'Prism Chef', tier: 4, perks: ['speed', 'cook'] },
+  { id: 'galaxy', name: 'Galaxy Chef', tier: 4, perks: ['chop', 'speed'] },
+  { id: 'golden', name: 'Golden Chef', tier: 4, perks: ['cook', 'wash'] },
+  { id: 'neon', name: 'Neon Chef', tier: 4, perks: ['speed', 'jump'] },
+];
+for (const o of OUTFITS) if (o.world == null) o.world = -2; // -2: from gift boxes
+/** Perk multiplier an outfit gives for a stat (1 = none). */
+export function perkMul(outfitId, stat) {
+  const o = OUTFITS.find((q) => q.id === outfitId);
+  if (!o || !o.perks.includes(stat)) return 1;
+  const k = TIERS[o.tier].amt;
+  return stat === 'recover' ? 1 - k : 1 + k;
+}
+export const perkText = (o) => o.perks.map((st) => `+${Math.round(TIERS[o.tier].amt * 100)}% ${PERKS[st]}`).join(', ');
+
+// ---------------------------------------------------------------- gift boxes
+// Bought with coins; each holds one surprise: an outfit, an upgrade tier, or a bag of coins.
+// tiers: chance weights of an outfit's tier (common..chroma) when the box holds an outfit.
+export const BOXES = [
+  { id: 'bronze', name: 'Bronze Gift', cost: 120, color: '#c8803a', odds: { coins: 0.35, upg: 0.35, skin: 0.3 }, tiers: [70, 25, 5, 0, 0], coins: [40, 100] },
+  { id: 'silver', name: 'Silver Gift', cost: 300, color: '#c8d2dc', odds: { coins: 0.2, upg: 0.35, skin: 0.45 }, tiers: [25, 42, 23, 9, 1], coins: [110, 220] },
+  { id: 'gold', name: 'Gold Gift', cost: 700, color: '#ffc83a', odds: { coins: 0.1, upg: 0.3, skin: 0.6 }, tiers: [0, 28, 38, 26, 8], coins: [260, 480], upgN: 2 },
 ];
 export const COLORS = [0xe8553a, 0x3a8ae8, 0x4ab84a, 0xf2b52a, 0xa05ad8, 0x2ac0b8, 0xf27ab0, 0x5a5a6a];
 export const SLOT_COLORS = [0xff6a3d, 0x3d9bff, 0x5ad15a, 0xffcf3d];
@@ -162,7 +213,7 @@ export const T = {
 };
 
 // ---------------------------------------------------------------- character upgrades
-// Bought with coins earned from every shift; each has 5 tiers. Effects are applied by the host's
+// Found in gift boxes (bought with coins earned every shift); each has 5 tiers. Effects are applied by the host's
 // sim (and by each client's own movement prediction), so everyone sees the same cook.
 export const UPGRADES = [
   { id: 'speed', name: 'Quick Feet', desc: 'Run faster', per: 0.06, unit: '% speed' },
@@ -173,15 +224,15 @@ export const UPGRADES = [
   { id: 'recover', name: 'Quick Recovery', desc: 'Respawn sooner after a mishap', per: 0.12, unit: '% faster respawn' },
 ];
 export const UPGRADE_MAX = 5;
-export const UPGRADE_COST = [80, 160, 280, 450, 700];
 /** Sanitise an upgrade map coming off the network or out of storage. */
 export function cleanUpg(u) {
   const out = {};
   for (const g of UPGRADES) out[g.id] = Math.max(0, Math.min(UPGRADE_MAX, (u && u[g.id]) | 0));
   return out;
 }
-/** Multiplier from an upgrade tier (recover shortens instead of lengthening). */
+/** Multiplier for a stat: upgrade tiers (recover shortens instead of lengthening) times the outfit's perk. */
 export const upgMul = (p, id) => {
   const g = UPGRADES.find((q) => q.id === id), n = (p && p.upg && p.upg[id]) || 0;
-  return id === 'recover' ? 1 - g.per * n : 1 + g.per * n;
+  const base = !g ? 1 : id === 'recover' ? 1 - g.per * n : 1 + g.per * n;
+  return base * perkMul(p && p.outfit, id);
 };

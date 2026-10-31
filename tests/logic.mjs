@@ -4,7 +4,9 @@ import { WORLDS, INGREDIENTS, T } from '../src/config.js';
 import { buildLevel, validate } from '../src/levels.js';
 import { Sim, movePlayer, starsFor, findTarget, starThresholds } from '../src/sim.js';
 import { moverX, floeAt } from '../src/hazards.js';
-import { levelUnlocked, outfitUnlocked } from '../src/save.js';
+import { levelUnlocked, outfitUnlocked, openBox, skipLevel } from '../src/save.js';
+import { OUTFITS, TIERS, BOXES, upgMul, perkMul } from '../src/config.js';
+import { handAngle, supportAt } from '../src/hazards.js';
 import { MP_LEVEL } from '../src/levels.js';
 import { envAt, deadlyCells } from '../src/hazards.js';
 
@@ -323,7 +325,7 @@ test('jungle kitchens are three or four small pods round the tree, joined by rop
     assert(L.zones.length >= 3 && L.zones.length <= 4, `5-${li}: ${L.zones.length} pods`);
     for (const z of L.zones) assert(z.x1 - z.x0 <= 10 && z.y1 - z.y0 <= 6, `5-${li}: pod ${z.x1 - z.x0 + 1}x${z.y1 - z.y0 + 1} too big`);
     assert(L.bridges.length && L.bridges.every((b) => b.rope), `5-${li}: rope bridges`);
-    assert(L.gaps.some((g) => g.dir === 'x') && L.gaps.some((g) => g.dir === 'y'), `5-${li}: pods side by side and front to back`);
+    assert(L.gaps.length >= 2, `5-${li}: pods joined by bridges`);
   }
   assert(buildLevel(5, 6).zones.length === 4 && buildLevel(5, 10).zones.length === 4, 'later and multiplayer treehouses have four pods');
 });
@@ -397,7 +399,7 @@ test('belt items glide continuously and queue up behind each other', () => {
 });
 
 test('rope bridges running front to back sway cooks sideways', () => {
-  const L = buildLevel(5, 3);
+  const L = Array.from({ length: 10 }, (_, li) => buildLevel(5, li)).find((q) => q.bridges.some((b) => b.dir === 'y'));
   const b = L.bridges.find((q) => q.dir === 'y');
   assert(b, 'a front-to-back rope bridge');
   const [x, y] = b.tiles[0];
@@ -415,7 +417,83 @@ test('every world is open; the next level needs a star on the one before', () =>
   s.stars['5-0'] = 1;
   assert(levelUnlocked(s, 5, 1) && !levelUnlocked(s, 5, 2), 'one star opens the next level only');
   assert(outfitUnlocked(s, 'explorer') && !outfitUnlocked(s, 'pirate'), 'outfit from clearing the world\'s first level');
+  // a (placeholder) ad skip opens the next level without a star
+  s.skipped = {}; globalThis.localStorage = { setItem() {}, getItem() { return null; } };
+  skipLevel(s, '5-1');
+  assert(levelUnlocked(s, 5, 2) && !levelUnlocked(s, 5, 3), 'ad skip opens just the next level');
 });
+
+test('outfits come in five tiers with perks that grow with rarity', () => {
+  for (let ti = 0; ti < 5; ti++) assert(OUTFITS.filter((o) => o.tier === ti).length >= 4, `tier ${TIERS[ti].name} has outfits`);
+  assert(new Set(OUTFITS.map((o) => o.id)).size === OUTFITS.length, 'unique ids');
+  for (const o of OUTFITS) assert(o.perks.length === (o.tier === 4 ? 2 : 1), `${o.id} perks`);
+  assert(perkMul('linecook', 'speed') < perkMul('aviator', 'speed') && perkMul('aviator', 'speed') < perkMul('prism', 'speed'), 'rarer = stronger');
+  assert(perkMul('chef', 'speed') === 1, 'no perk, no change');
+  assert(upgMul({ outfit: 'ninja', upg: { speed: 2 } }, 'speed') > upgMul({ outfit: 'chef', upg: { speed: 2 } }, 'speed'), 'perk stacks on upgrades');
+  // a cooking perk speeds up the whole kitchen's pans
+  const L = buildLevel(0, 1);
+  const a = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }], 1), b = new Sim(L, [{ id: 'a', name: 'A', outfit: 'royal', color: 0 }], 1);
+  assert(a.cookMul === 1 && b.cookMul > 1.1, 'royal chef cooks faster');
+});
+
+test('gift boxes hand out outfits, upgrades or coins, and bigger boxes are rarer', () => {
+  globalThis.localStorage = { setItem() {}, getItem() { return null; } };
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const fresh = () => ({ stars: {}, best: {}, coins: 100000, upg: {}, owned: [], skipped: {} });
+  const tierAvg = (id) => {
+    const s = fresh(), tiers = [];
+    for (let k = 0; k < 400; k++) { const r = openBox(s, id, rand); if (r.kind === 'skin' || r.kind === 'dupe') tiers.push(r.tier); }
+    return tiers.reduce((x, y) => x + y, 0) / tiers.length;
+  };
+  assert(tierAvg('bronze') < tierAvg('silver') && tierAvg('silver') < tierAvg('gold'), 'gold boxes give rarer outfits');
+  const s = fresh();
+  const kinds = new Set();
+  for (let k = 0; k < 60; k++) kinds.add(openBox(s, 'silver', rand).kind);
+  assert(kinds.has('skin') && kinds.has('upg') && kinds.has('coins'), 'all three kinds of prize: ' + [...kinds]);
+  assert(new Set(s.owned).size === s.owned.length, 'never the same outfit twice');
+  const poor = { ...fresh(), coins: 10 };
+  assert(openBox(poor, 'bronze', rand) === null && poor.coins === 10, 'cannot buy what you cannot afford');
+});
+
+test('factory kitchens have nowhere to fall out', () => {
+  for (let li = 0; li <= 10; li++) {
+    const L = buildLevel(6, li);
+    const at = (x, y) => (x >= 0 && y >= 0 && x < L.W && y < L.H ? L.tiles[y * L.W + x] : null);
+    for (const t of L.tiles) {
+      if (t.k !== 'floor' && t.k !== 'bridge') continue;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const q = at(t.x + dx, t.y + dy);
+        assert(q && q.k !== 'void', `6-${li}: open edge next to ${t.x},${t.y}`);
+      }
+    }
+    assert(!L.bridges.some((b) => b.shifting), `6-${li}: no sinking catwalks`);
+  }
+  assert(Array.from({ length: 10 }, (_, li) => buildLevel(6, li)).some((L) => L.belts.length >= 2), 'item belts across the gaps');
+});
+
+test('clock hands turn a quarter at a time and carry cooks across the gap', () => {
+  const L = Array.from({ length: 10 }, (_, li) => buildLevel(7, li)).find((q) => q.hands.some((h) => h.axis === 'x'));
+  assert(L, 'a clock level with a side-to-side hand');
+  const h = L.hands.find((q) => q.axis === 'x');
+  // find a moment it lies across the gap, and one where it lies along it
+  let tA = 0; while (Math.abs(Math.sin(handAngle(h, tA))) > 1e-6 || Math.abs(Math.sin(handAngle(h, tA + 0.3))) > 1e-6) tA += 0.05;
+  let tB = 0; while (Math.abs(Math.cos(handAngle(h, tB))) > 1e-6) tB += 0.05;
+  const [gx, gy] = h.cells[0];
+  assert(supportAt(L, gx + 0.5, gy + 0.5, tA).ok, 'across: a bridge');
+  assert(!supportAt(L, h.x - 0.48, h.y, tB).ok && !supportAt(L, h.x + 0.48, h.y, tB).ok, 'along: no way across');
+  assert(supportAt(L, h.x, h.y + 0.9, tB).ok, 'along: lying in the gap');
+  // always clockwise, never backwards
+  let prev = handAngle(h, 0);
+  for (let t = 0.05; t < h.period * 2; t += 0.05) { const a = handAngle(h, t); assert(a >= prev - 1e-9, 'turns one way'); prev = a; }
+  // a cook standing on it as it swings stays on and is carried round
+  const p = { x: gx + 0.5, y: h.y, z: 0, vx: 0, vy: 0, vz: 0, fx: 1, fy: 0, ko: 0 };
+  let t = tA, fell = false;
+  while (Math.abs(Math.sin(handAngle(h, t))) < 1e-6) t += 1 / 60;
+  for (let i = 0; i < 60 * 1.5; i++) { if (movePlayer(L, p, { mx: 0, my: 0 }, 1 / 60, t) === 'fell' || p.falling) fell = true; t += 1 / 60; }
+  assert(!fell, 'rode the swing');
+});
+
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

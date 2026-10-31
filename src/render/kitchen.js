@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { T, INGREDIENTS, WORLDS } from '../config.js';
 import { tileAt } from '../levels.js';
-import { floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
+import { handAngle, handWarn, floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
 import { floorTex, wallTex, topTex, stripeTex, beltTex, glowTex, textTex, shade, cabinetTex } from './textures.js';
 import { Particles } from './particles.js';
 import { makeLava } from './lava.js';
@@ -105,6 +105,7 @@ export class Kitchen {
     for (const t of L.tiles) if (t.k === 'counter') this.buildStation(t, sideM, topM);
     this.buildBridges();
     this.buildFloes();
+    this.buildHands();
     this.buildShifters();
     this.buildMovers(sideM, topM);
     this.buildHazardProps();
@@ -429,6 +430,32 @@ export class Kitchen {
     }
   }
 
+  /** Clock tower: ornate clock hands pivoting in the gaps (ride them across). */
+  buildHands() {
+    const brass = mat(0xd8a84a, { metal: 0.85, rough: 0.28 }), dark = mat(0x2a1e14, { metal: 0.6, rough: 0.4 });
+    this.handMeshes = (this.L.hands || []).map((h) => {
+      const g = new THREE.Group();
+      g.position.set(this.wx(h.x), 0, this.wz(h.y));
+      const L2 = h.len / 2;
+      // the blade: a dark plate with a brass rim you walk on, a spade tip and a counterweight tail
+      g.add(part(box(), dark, [0, -0.06, 0], [h.len - 0.3, 0.12, h.w * 0.92]));
+      g.add(part(new THREE.PlaneGeometry(h.len - 0.4, h.w * 0.7), new THREE.MeshStandardMaterial({ map: floorTex('clockfloor'), roughness: 0.5, metalness: 0.3 }), [0, 0.003, 0], 1, [-Math.PI / 2, 0, 0]));
+      for (const sz of [-1, 1]) g.add(part(box(), brass, [0, -0.02, sz * h.w * 0.44], [h.len - 0.3, 0.06, 0.07]));
+      g.add(part(box(), brass, [L2 - 0.1, -0.05, 0], [0.55, 0.1, 0.55], [0, Math.PI / 4, 0]));
+      g.add(part(new THREE.TorusGeometry(0.32, 0.07, 8, 24), brass, [-L2 + 0.05, -0.05, 0], 1, [Math.PI / 2, 0, 0]));
+      // the hub: a turning gear and a lamp that flashes before every swing
+      const gear = makeGearSmall(0.62, brass);
+      gear.position.y = -0.2;
+      g.add(gear);
+      g.add(part(cyl(20), brass, [0, -0.05, 0], [0.24, 0.12, 0.24]));
+      const lamp = part(sph(12), new THREE.MeshStandardMaterial({ color: 0xffd080, emissive: 0xff9020, emissiveIntensity: 0.1 }), [0, 0.03, 0], [0.12, 0.06, 0.12]);
+      g.add(lamp);
+      g.add(part(cyl(10), mat(0x3a3a3a, { metal: 0.8, rough: 0.3 }), [0, -3, 0], [0.12, 6, 0.12]));
+      this.root.add(g);
+      return { h, g, gear, lamp };
+    });
+  }
+
   buildFloes() {
     this.floeMeshes = this.L.floes.map((f) => {
       const g = new THREE.Group();
@@ -722,6 +749,12 @@ export class Kitchen {
       else if (f.belt) f.belt.offset.x -= dt * (f.speed || 1.7);
     }
     // floes, bridges, shifting walls
+    for (const { h, g, gear, lamp } of this.handMeshes) {
+      const a = handAngle(h, play);
+      g.rotation.y = -a;
+      gear.rotation.y = a * 3;
+      lamp.material.emissiveIntensity = handWarn(h, play) && Math.sin(rt * 14) > 0 ? 3 : 0.15;
+    }
     for (const { f, g } of this.floeMeshes) {
       const r = floeAt(f, play);
       g.position.set(this.wx(r.x), Math.sin(rt * 1.4 + f.phase * 6) * 0.03, this.wz(r.y));
@@ -1362,3 +1395,14 @@ function puddleTex() {
 }
 
 Object.assign(Kitchen.prototype, treehouse);
+
+/** A flat little gear (hub of a clock hand). */
+function makeGearSmall(R, m) {
+  const g = new THREE.Group();
+  g.add(part(cyl(24), m, [0, 0, 0], [R, 0.1, R]));
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    g.add(part(box(), m, [Math.cos(a) * R, 0, Math.sin(a) * R], [0.16, 0.1, 0.12], [0, -a, 0]));
+  }
+  return g;
+}

@@ -1,10 +1,10 @@
 // DOM UI: title, lobby (outfits, colours, level vote), modals, the in-game HUD and results.
 import * as THREE from 'three';
-import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRecipes, LEVEL_RECIPES, VERSION, UPGRADES, UPGRADE_MAX } from './config.js';
+import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRecipes, LEVEL_RECIPES, VERSION, UPGRADES, UPGRADE_MAX, TIERS, BOXES, perkText } from './config.js';
 import { buildLevel, levelTitle, MP_LEVEL } from './levels.js';
 import { envAt, cuckooAt } from './hazards.js';
 import { ingIcon, dishIcon, chefIcon } from './render/thumbs.js';
-import { loadSave, writeSave, totalStars, levelUnlocked, outfitUnlocked, upgradeCost } from './save.js';
+import { loadSave, writeSave, totalStars, levelUnlocked, outfitUnlocked } from './save.js';
 const lvLabel = (wi, li) => (li === MP_LEVEL ? `${wi + 1}-MP` : `${wi + 1}-${li + 1}`);
 import { sfx } from './audio.js';
 
@@ -56,8 +56,8 @@ const MECHANICS = [
   'Tight <b>compartments</b> joined by <b>tube corridors</b>. <b>Laser doors</b> cycle in the tubes, and when <b>gravity fails</b> everything floats. Jump with Space!',
   'Every kitchen floats on its own <b>cloud</b>. Strong <b>gusts</b> push cooks around, <b>lightning</b> strikes the red markers, and mind the <b>holes</b>!',
   'Small <b>treehouses</b> built round the great tree, joined by swaying <b>rope bridges</b>. <b>Monkeys</b> steal food from counters: run into them to make them drop it!',
-  'Hop on the <b>walkway conveyors</b> to ride between sections (one lane each way). <b>Belts</b> carry items between stations: flip the <b>lever</b> to reverse them.',
-  'Platforms on the clock\'s <b>gears</b>. Random <b>time warps</b> speed up or slow down cooks and stoves. Jump over the <b>cuckoo</b> when it sweeps a row!',
+  'Hop on the <b>walkway conveyors</b> to ride between sections (one lane each way): no way to fall here. <b>Belts</b> carry items across: flip the <b>lever</b> to reverse them.',
+  'Platforms over the great clock face. Ride the giant <b>clock hands</b> across: they turn a quarter at a time, so hop off before they swing away. Random <b>time warps</b> speed up or slow down cooks and stoves. Jump over the <b>cuckoo</b> when it sweeps a row!',
 ];
 export { MECHANICS };
 
@@ -226,7 +226,7 @@ export class UI {
         <div class="panel players" id="players"></div>
         <div class="passthrough"></div>
         <div class="panel side">
-          <div class="tabs"><button data-t="outfit">Outfit</button><button data-t="upg">Upgrades</button><button data-t="level" id="votetab">Vote Level</button></div>
+          <div class="tabs"><button data-t="outfit">Outfit</button><button data-t="upg">Gifts</button><button data-t="level" id="votetab">Vote Level</button></div>
           <div class="scroll" id="side"></div>
         </div>
         <div class="lobby-foot">
@@ -293,15 +293,22 @@ export class UI {
     if (!me) return;
     side.innerHTML = '';
     if (this.tab === 'outfit') {
-      side.appendChild(el('<h3>Outfit mods</h3>'));
-      const grid = el('<div class="outfits"></div>');
-      for (const o of OUTFITS) {
-        const unlocked = outfitUnlocked(s, o.id);
-        const b = el(`<button class="outfit ${me.outfit === o.id ? 'on' : ''} ${unlocked ? '' : 'locked'}" data-lock="Clear ${o.world >= 0 ? WORLDS[o.world].name : ''} 1"><img src="${chefIcon(o.id, COLORS[me.color % COLORS.length], me.skin)}" alt="" />${esc(o.name)}</button>`);
-        b.addEventListener('click', () => { if (!unlocked) { sfx.wrong(); return; } sfx.ui(); app.setProfile({ outfit: o.id }); });
-        grid.appendChild(b);
-      }
-      side.appendChild(grid);
+      const have = OUTFITS.filter((o) => outfitUnlocked(s, o.id)).length;
+      side.appendChild(el(`<h3>Outfits <span class="muted-n">${have}/${OUTFITS.length}</span></h3>`));
+      const cur = OUTFITS.find((o) => o.id === me.outfit);
+      if (cur) side.appendChild(el(`<div class="perk-now" style="--tc:${TIERS[cur.tier].color}"><b class="${cur.tier === 4 ? 'chroma-t' : ''}">${TIERS[cur.tier].name}</b> ${esc(perkText(cur))}</div>`));
+      TIERS.forEach((tr, ti) => {
+        side.appendChild(el(`<div class="tier-h ${ti === 4 ? 'chroma-t' : ''}" style="--tc:${tr.color}">${tr.name} <span>+${Math.round(tr.amt * 100)}%${ti === 4 ? ' x2 perks' : ''}</span></div>`));
+        const grid = el('<div class="outfits"></div>');
+        for (const o of OUTFITS.filter((q) => q.tier === ti)) {
+          const unlocked = outfitUnlocked(s, o.id);
+          const lock = o.world >= 0 ? `Clear ${WORLDS[o.world].name} 1` : 'Gift box';
+          const b = el(`<button class="outfit t${ti} ${me.outfit === o.id ? 'on' : ''} ${unlocked ? '' : 'locked'}" style="--tc:${tr.color}" data-lock="${esc(lock)}" title="${esc(perkText(o))}"><img src="${chefIcon(o.id, COLORS[me.color % COLORS.length], me.skin)}" alt="" />${esc(o.name)}<small>${esc(perkText(o))}</small></button>`);
+          b.addEventListener('click', () => { if (!unlocked) { sfx.wrong(); this.toast(o.world >= 0 ? `Clear level 1 of ${WORLDS[o.world].name} to earn this` : 'Find it in a gift box'); return; } sfx.ui(); app.setProfile({ outfit: o.id }); });
+          grid.appendChild(b);
+        }
+        side.appendChild(grid);
+      });
       side.appendChild(el('<h3 style="margin-top:12px">Colour</h3>'));
       const sw = el('<div class="swatches"></div>');
       COLORS.forEach((c, i) => { const d = el(`<div class="swatch ${me.color === i ? 'on' : ''}" style="background:${hex(c)}"></div>`); d.addEventListener('click', () => { sfx.ui(); app.setProfile({ color: i }); }); sw.appendChild(d); });
@@ -312,7 +319,7 @@ export class UI {
       side.appendChild(sk);
       return;
     }
-    if (this.tab === 'upg') { this.renderUpgrades(side); return; }
+    if (this.tab === 'upg') { this.renderGifts(side); return; }
     if (app.multi) { this.renderWorldVote(side); return; }
     // level vote
     const votes = new Map();
@@ -334,7 +341,7 @@ export class UI {
       const vv = votes.get(key) || [];
       const b = el(`<button class="lvl ${me.vote === key ? 'on' : ''} ${un ? '' : 'locked'}"><span class="n">${wi + 1}-${li + 1}</span><span class="st">${[0, 1, 2].map((k) => `<span class="${k < st ? 'f' : ''}">★</span>`).join('')}</span><span class="votes">${vv.map((i) => `<i style="background:${hex(SLOT_COLORS[i])}"></i>`).join('')}</span></button>`);
       b.title = levelTitle(wi, li);
-      b.addEventListener('click', () => { if (!un) { sfx.wrong(); this.toast('Earn at least one star on the previous level first'); return; } sfx.ui(); app.vote(key); });
+      b.addEventListener('click', () => { if (!un) { sfx.wrong(); this.lockedLevel(wi, li); return; } sfx.ui(); app.vote(key); });
       lv.appendChild(b);
     }
     side.appendChild(lv);
@@ -516,28 +523,87 @@ export class UI {
     });
   }
 
-  renderUpgrades(side) {
+  /** Gift boxes (outfits, upgrade tiers, coins) and the upgrades they have given you. */
+  renderGifts(side) {
     const app = this.app, s = app.save;
-    side.appendChild(el(`<h3>Upgrades <span class="wallet-inline"><span class="coin">$</span>${s.coins}</span></h3>`));
-    side.appendChild(el('<p style="margin:0 0 8px;color:var(--muted);font-size:13.5px">Earn coins every shift (score, stars and first-time stars). Upgrades work in solo and multiplayer.</p>'));
+    side.appendChild(el(`<h3>Gift boxes <span class="wallet-inline"><span class="coin">$</span>${s.coins}</span></h3>`));
+    side.appendChild(el('<p style="margin:0 0 8px;color:var(--muted);font-size:13.5px">Earn coins every shift. Each box holds one surprise: an <b>outfit</b>, an <b>upgrade</b> tier, or a bag of <b>coins</b>. Bigger boxes hold rarer outfits.</p>'));
+    const row = el('<div class="boxes"></div>');
+    for (const B of BOXES) {
+      const odds = B.tiers.map((w, ti) => (w ? `<i style="background:${TIERS[ti].color}" title="${TIERS[ti].name}"></i>` : '')).join('');
+      const can = s.coins >= B.cost;
+      const card = el(`<div class="boxcard" style="--bc:${B.color}"><div class="gift sm"><div class="lid"></div><div class="body"></div></div><b>${esc(B.name)}</b><div class="odds">${odds}</div><button class="btn small ${can ? 'mint' : 'ghost'}"><span class="coin sm">$</span>${B.cost}</button></div>`);
+      card.querySelector('button').addEventListener('click', () => {
+        const res = app.openGift(B.id);
+        if (!res) { sfx.wrong(); this.toast(`Need ${B.cost - s.coins} more coins`); return; }
+        this.giftReveal(B, res);
+      });
+      row.appendChild(card);
+    }
+    side.appendChild(row);
+    side.appendChild(el('<h3 style="margin-top:12px">Upgrades</h3>'));
     const list = el('<div class="upgrades"></div>');
     for (const g of UPGRADES) {
-      const lvl = s.upg[g.id] | 0, cost = upgradeCost(s, g.id);
-      const can = cost != null && s.coins >= cost;
-      const row = el(`<div class="upg ${cost == null ? 'max' : ''}">
+      const lvl = s.upg[g.id] | 0;
+      list.appendChild(el(`<div class="upg ${lvl >= UPGRADE_MAX ? 'max' : ''}">
         <div class="ui-ic">${UPG_ICON[g.id]}</div>
         <div class="grow"><b>${esc(g.name)}</b><span>${esc(g.desc)}${lvl ? ` · +${Math.round(g.per * lvl * 100)}${esc(g.unit)}` : ''}</span>
           <div class="pips">${Array.from({ length: UPGRADE_MAX }, (_, k) => `<i class="${k < lvl ? 'on' : ''}"></i>`).join('')}</div></div>
-        <button class="btn small ${can ? 'mint' : 'ghost'}" ${cost == null ? 'disabled' : ''}>${cost == null ? 'MAX' : `<span class="coin sm">$</span>${cost}`}</button></div>`);
-      row.querySelector('button').addEventListener('click', () => {
-        if (cost == null) return;
-        if (!app.buy(g.id)) { sfx.wrong(); this.toast(`Need ${cost - s.coins} more coins`); return; }
-        row.classList.add('bought');
-        this.toast(`${g.name} upgraded to tier ${s.upg[g.id]}`);
-      });
-      list.appendChild(row);
+        <span class="muted-n">${lvl >= UPGRADE_MAX ? 'MAX' : `${lvl}/${UPGRADE_MAX}`}</span></div>`));
     }
     side.appendChild(list);
+  }
+
+  /** The box shakes, bursts open and shows what was inside. */
+  giftReveal(B, res) {
+    const o = res.id && OUTFITS.find((q) => q.id === res.id);
+    const tier = o ? TIERS[o.tier] : null;
+    const inner = res.kind === 'skin' || res.kind === 'dupe'
+      ? `<img src="${chefIcon(o.id, COLORS[this.app.save.color % COLORS.length], this.app.save.skin)}" alt="" /><div class="tierlbl ${o.tier === 4 ? 'chroma-t' : ''}" style="color:${tier.color}">${tier.name} outfit</div><h2>${esc(o.name)}</h2><p>${esc(perkText(o))}</p>${res.kind === 'dupe' ? `<p class="dupe">Already yours: <span class="coin sm">$</span>+${res.coins} coins instead</p>` : ''}`
+      : res.kind === 'upg'
+        ? `<div class="upgs">${res.ids.map((id) => `<div class="ui-ic">${UPG_ICON[id]}</div>`).join('')}</div><div class="tierlbl" style="color:#5ad15a">Upgrade${res.ids.length > 1 ? 's' : ''}</div><h2>${res.ids.map((id) => esc(UPGRADES.find((g) => g.id === id).name)).join(' + ')}</h2><p>${res.ids.map((id) => `tier ${this.app.save.upg[id]}`).join(', ')}</p>`
+        : `<div class="coinpile"><span class="coin">$</span></div><div class="tierlbl" style="color:#ffcf3d">Coins</div><h2>+${res.coins}</h2>`;
+    this.modal(`<div class="reveal" style="--bc:${B.color};--tc:${tier ? tier.color : '#ffcf3d'}">
+        <div class="gift big shaking"><div class="lid"></div><div class="body"></div></div>
+        <div class="prize">${inner}</div>
+        <button class="btn mustard" data-close style="margin-top:10px">Nice!</button></div>`, (bg) => {
+      const R = bg.querySelector('.reveal');
+      [0, 0.25, 0.5, 0.75, 1.0].forEach((t, i) => setTimeout(() => sfx.tick(), t * 1000 + i * 30));
+      setTimeout(() => { R.classList.add('open'); sfx.deliver(); if (tier && o.tier >= 3) setTimeout(() => sfx.star(2), 250); this.renderSide(); }, 1300);
+    });
+  }
+
+  /** A level you have not unlocked: say how to open it, or skip with an ad. */
+  lockedLevel(wi, li) {
+    this.modal(`<h2>Level ${wi + 1}-${li + 1} is locked</h2>
+      <p style="color:var(--muted)">Earn at least one star on level ${wi + 1}-${li}, or watch a short ad to skip it.</p>
+      <div style="display:flex;gap:10px;justify-content:center"><button class="btn ghost" data-close>OK</button><button class="btn mint" data-ad>${ICON.play} Watch ad to skip</button></div>`, (bg, close) => {
+      bg.querySelector('[data-ad]').addEventListener('click', () => { close(); this.watchAd(() => { this.app.skipLevel(`${wi}-${li - 1}`); this.toast(`Level ${wi + 1}-${li + 1} unlocked`); this.renderSide(); }); });
+    });
+  }
+
+  /** Placeholder ad: a fake sponsor card and a countdown, then the reward. */
+  watchAd(onDone) {
+    const ADS = [
+      ['Spatula Pro X', 'The last spatula you will ever drop. Probably.', '#ff8a3a'],
+      ['Panic Plates Premium', 'Twice the plates. Half the panic. Zero refunds.', '#3d9bff'],
+      ['Fire-B-Gone', 'For kitchens that are, at this moment, on fire.', '#e8553a'],
+      ['Monkey Repellent', 'Keeps your bananas yours. Monkeys hate this one trick.', '#5ad15a'],
+    ];
+    const [title, line, c] = ADS[Math.floor(Math.random() * ADS.length)];
+    let left = 5;
+    const close = this.modal(`<div class="ad" style="--ac:${c}"><div class="adtag">AD · placeholder</div><div class="adart">${ICON.play}</div><h2>${title}</h2><p>${line}</p><div class="adbar"><i></i></div><button class="btn ghost" data-skip disabled>Reward in ${left}s</button></div>`, (bg) => {
+      bg.style.pointerEvents = 'auto';
+      const btn = bg.querySelector('[data-skip]');
+      bg.querySelector('.adbar i').style.animation = `adfill ${left}s linear forwards`;
+      const iv = setInterval(() => {
+        left--;
+        if (left > 0) { btn.textContent = `Reward in ${left}s`; return; }
+        clearInterval(iv);
+        btn.disabled = false; btn.className = 'btn mint'; btn.textContent = 'Claim reward';
+        btn.addEventListener('click', () => { sfx.star(1); close(); onDone(); });
+      }, 1000);
+    });
   }
 
   /** Multiplayer: vote for a world; every world is open and plays its multiplayer kitchen. */
@@ -593,7 +659,7 @@ export class UI {
   closeDice() { if (this.diceEl) { this.diceEl.remove(); this.diceEl = null; } }
 
   // ---------------------------------------------------------------- results
-  showResults(res, { isHost, hasNext, onNext, onReplay, onLobby, onLeave }) {
+  showResults(res, { isHost, hasNext, onNext, onReplay, onLobby, onLeave, onSkip }) {
     const [wi, li] = res.level.split('-').map(Number);
     const v = el(`
       <div class="results"><div class="panel card">
@@ -611,12 +677,12 @@ export class UI {
         </div>
         <div class="team">${res.players.map((p) => `<div class="mate" style="--c:${hex(SLOT_COLORS[p.slot % 4])}"><img src="${chefIcon(p.outfit, COLORS[p.color % COLORS.length], p.skin)}" alt="" /><div><b>${esc(p.name)}</b>${p.stats.delivered} served · ${p.stats.chopped} chopped · ${p.stats.washed} washed${p.stats.kos ? ` · ${p.stats.kos} oops` : ''}</div></div>`).join('')}</div>
         <div class="acts">${isHost
-          ? `<button class="btn ghost" data-a="lobby">${ICON.home} Lobby</button><button class="btn sky" data-a="replay">Replay</button>${hasNext ? `<button class="btn mustard big" data-a="next">${ICON.play} Next level</button>` : ''}`
+          ? `<button class="btn ghost" data-a="lobby">${ICON.home} Lobby</button><button class="btn sky" data-a="replay">Replay</button>${hasNext ? `<button class="btn mustard big" data-a="next">${ICON.play} Next level</button>` : onSkip ? `<button class="btn mint" data-a="skip">${ICON.play} Watch ad to skip</button>` : ''}`
           : `<span style="color:var(--muted);align-self:center">Waiting for the host…</span><button class="btn ghost" data-a="leave">Leave</button>`}</div>
       </div></div>`);
     this.root.appendChild(v);
     [0, 1, 2].forEach((i) => { if (i < res.stars) setTimeout(() => sfx.star(i), 300 + i * 350); });
-    const map = { next: onNext, replay: onReplay, lobby: onLobby, leave: onLeave };
+    const map = { next: onNext, replay: onReplay, lobby: onLobby, leave: onLeave, skip: () => this.watchAd(onSkip) };
     v.querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', () => { sfx.ui(); map[b.dataset.a](); }));
     return v;
   }

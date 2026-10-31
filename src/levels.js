@@ -76,7 +76,7 @@ function tryBuild(wi, liIn, seed) {
   const interiorOf = (z, x, y) => zi(x, y) === z.i && at(x, y).k === 'floor';
 
   // ---- connections across gaps: bridges (rope, ice, tube...), drifting floes or conveyor shuttles ----
-  const bridges = [], floes = [], gaps = [];
+  const bridges = [], floes = [], gaps = [], hands = [];
   const kind = wi === 5 ? 'rope' : 'bridge';
   for (const ln of lay.links) {
     const A = zones[ln.a], B = zones[ln.b];
@@ -103,6 +103,13 @@ function tryBuild(wi, liIn, seed) {
         }
         continue;
       }
+      if (wi === 7 && li >= 2 && r.chance(0.6)) {
+        // clock tower: a giant clock hand pivots in the gap, a quarter turn at a time: ride it across
+        const y = rows[Math.floor(rows.length / 2)];
+        set(A.x1, y, 'floor'); set(B.x0, y, 'floor');
+        hands.push({ x: gx0 + gw / 2, y: y + 0.5, len: gw + 1.6, w: 0.9, axis: 'x', period: 10 + r() * 3, phase: r(), cells: Array.from({ length: gw }, (_, k) => [gx0 + k, y]) });
+        continue;
+      }
       if (wi === 1 && li >= 3 && rows.length >= 3 && r.chance(0.7)) {
         // glacier: a floe drifts up and down the channel; the banks are open along its path
         const y0 = rows[0], y1 = rows[rows.length - 1] - 1;
@@ -119,7 +126,7 @@ function tryBuild(wi, liIn, seed) {
         set(A.x1, y, 'floor'); set(B.x0, y, 'floor');
         const tb = [];
         for (let x = gx0; x <= gx1; x++) { set(x, y, 'bridge', { rope: kind === 'rope', dir: 'x' }); tb.push([x, y]); }
-        bridges.push({ tiles: tb, rope: kind === 'rope', dir: 'x', shifting: (li >= 6 && pick.length > 1 && i === 1) || (wi === 2 && li >= 4 && i === 0 && pick.length > 1), row: y, a: ln.a, b: ln.b });
+        bridges.push({ tiles: tb, rope: kind === 'rope', dir: 'x', shifting: (li >= 6 && wi !== 6 && pick.length > 1 && i === 1) || (wi === 2 && li >= 4 && i === 0 && pick.length > 1), row: y, a: ln.a, b: ln.b });
       });
     } else {
       // A behind, B in front: columns where both edges are counters backed by floor
@@ -130,6 +137,12 @@ function tryBuild(wi, liIn, seed) {
       }
       if (!cols.length) return null;
       gaps.push({ dir: 'y', a: ln.a, b: ln.b, y0: gy0, y1: gy1, x0: cols[0], x1: cols[cols.length - 1] });
+      if (wi === 7 && li >= 3 && r.chance(0.5)) {
+        const x = cols[Math.floor(cols.length / 2)], gh = gy1 - gy0 + 1;
+        set(x, A.y1, 'floor'); set(x, B.y0, 'floor');
+        hands.push({ x: x + 0.5, y: gy0 + gh / 2, len: gh + 1.6, w: 0.9, axis: 'y', period: 10 + r() * 3, phase: r(), cells: Array.from({ length: gh }, (_, k) => [x, gy0 + k]) });
+        continue;
+      }
       const nb = cols.length >= 4 && li >= 5 && r.chance(0.5) ? 2 : 1;
       const pick = r.shuffle(cols.slice()).slice(0, nb).sort((a, b) => a - b);
       if (pick.length === 2 && pick[1] - pick[0] < 2) pick.pop();
@@ -232,6 +245,19 @@ function tryBuild(wi, liIn, seed) {
     movers.push({ x0: tx0, x1: tx1, y, period: 9 + (tx1 - tx0) * 1.2, phase: r() });
   }
 
+  // ---- factory: no way to fall out. The gaps between sections are filled with counters (some of
+  // them item belts, below) and every open edge next to somewhere you can walk gets a counter ----
+  if (wi === 6) {
+    for (const g of gaps) for (let y = g.y0; y <= g.y1; y++) for (let x = g.x0; x <= g.x1; x++) { const t = at(x, y); if (t.k === 'void' && !t.pit) set(x, y, 'counter', { fill: true }); }
+    const walk = (t) => t && (t.k === 'floor' || t.k === 'bridge');
+    for (const t of tiles) {
+      if (t.k !== 'void' || t.pit) continue;
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1 && !near; dx++) near = walk(at(t.x + dx, t.y + dy));
+      if (near) set(t.x, t.y, 'counter', { fill: true });
+    }
+  }
+
   const recipes = LEVEL_RECIPES[mp ? 7 : li].map((ri) => worldRecipes(wi)[ri]);
   const ings = [...new Set(recipes.flatMap((rc) => rc.ings))];
   const methods = new Set(ings.map((id) => world.ingredients.find((g) => g.id === id).method));
@@ -277,6 +303,19 @@ function tryBuild(wi, liIn, seed) {
     if (best && best.length >= 3) {
       best.forEach(([x, y], i) => { const t = at(x, y); free.delete(t); t.belt = belts.length; t.beltI = i; });
       belts.push({ tiles: best, dir: 1, speed: 0.9 + li * 0.05, lever: null });
+    }
+    // item belts running across the filled gaps between side-by-side sections
+    for (const g of gaps.filter((q) => q.dir === 'x')) {
+      const opts = [];
+      for (let y = g.y0; y <= g.y1; y++) {
+        const run = [];
+        for (let x = g.x0 - 1; x <= g.x1 + 1; x++) run.push(at(x, y));
+        if (run.every((t) => t.k === 'counter' && free.has(t) && t.belt == null) && !run.some((t) => [[0, -1], [0, 1]].some(([dx, dy]) => { const q = at(t.x + dx, t.y + dy); return q && q.belt != null; }))) opts.push(run);
+      }
+      if (!opts.length) continue;
+      const run = r.pick(opts), d = r.chance(0.5) ? 1 : -1;
+      run.forEach((t, i) => { free.delete(t); t.belt = belts.length; t.beltI = i; });
+      belts.push({ tiles: run.map((t) => [t.x, t.y]), dir: d, speed: 0.9 + li * 0.05, lever: null });
     }
     if (li >= 5) {
       // floor conveyors along one interior row push cooks around
@@ -410,7 +449,7 @@ function tryBuild(wi, liIn, seed) {
 
   return {
     world: wi, index: liIn, diff: li, mp, id: levelKey(wi, liIn), name: levelTitle(wi, liIn), W, H, seed, tiles,
-    zones, gaps, bridges, floes, plan: { shape: plan.shape, pods: !!plan.pods }, islands, shifters, belts, stations, spawns: spawnPool, movers,
+    zones, gaps, bridges, floes, hands, plan: { shape: plan.shape, pods: !!plan.pods }, islands, shifters, belts, stations, spawns: spawnPool, movers,
     recipes, duration: D, maxOrders: mp ? 5 : li < 2 ? 3 : li < 6 ? 4 : 5,
     orderGap: Math.max(9, 18 - li), stars: [round5(X * 0.3), round5(X * 0.55), round5(X * 0.8)], hz,
   };
@@ -426,6 +465,7 @@ export function validate(L) {
     if (f.axis === 'x') { for (let x = f.x0; x <= f.x1 + f.w - 1; x++) for (let y = f.y; y < f.y + f.h; y++) lane.add(x + ',' + y); }
     else for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y0; y <= f.y1 + f.h - 1; y++) lane.add(x + ',' + y);
   }
+  for (const h of L.hands || []) for (const [x, y] of h.cells) lane.add(x + ',' + y);
   const offB = new Set();
   for (const b of L.bridges) if (b.shifting) for (const [x, y] of b.tiles) offB.add(x + ',' + y);
   const errors = [];
