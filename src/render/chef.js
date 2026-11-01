@@ -1,6 +1,7 @@
 // Cook characters: rounded body, floating hands and feet, one of 9 outfits, and procedural
 // animation (walk, carry, chop, wash, spray, jump, fall, knocked-out spin).
 import * as THREE from 'three';
+import { makeKnife } from './tools.js';
 import { mat, part, sph, cyl, box, cone, tor, capsule } from './items.js';
 import { shade } from './textures.js';
 
@@ -49,11 +50,7 @@ export class Chef {
     this.build(outfit, color, skin);
     this.name = name;
     // a proper cleaver: wide steel blade, bolster and wooden handle
-    this.knife = new THREE.Group();
-    this.knife.add(part(box(), mat(0xe6edf4, { metal: 0.9, rough: 0.18 }), [0, 0.02, 0.17], [0.014, 0.13, 0.22]));
-    this.knife.add(part(box(), mat(0x9aa4ae, { metal: 0.9, rough: 0.3 }), [0, 0.085, 0.17], [0.016, 0.012, 0.22]));
-    this.knife.add(part(cyl(8), mat(0x8a8f96, { metal: 0.8 }), [0, 0, 0.05], [0.02, 0.03, 0.02], [Math.PI / 2, 0, 0]));
-    this.knife.add(part(box(), mat(0x5a3418, { rough: 0.6 }), [0, 0, -0.03], [0.03, 0.035, 0.12]));
+    this.knife = makeKnife();
     this.knife.visible = false;
     this.knife.scale.setScalar(1.5);
     this.land = 0; this.prevZ = 0; this.prevAir = false; this.blinkT = 2 + Math.random() * 3;

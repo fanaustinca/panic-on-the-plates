@@ -22,6 +22,7 @@ class App {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.localClippingEnabled = true; // the chopping rig cuts food at the knife
     this.ui = new UI(this);
     this.input = new Input();
     this.input.onPause = () => this.togglePause();

@@ -8,7 +8,9 @@ import { floorTex, wallTex, topTex, stripeTex, beltTex, glowTex, textTex, shade,
 import { Particles } from './particles.js';
 import { makeLava } from './lava.js';
 import { WATERLINE } from './ship.js';
-import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode, makeItem, itemKey, makeIngredient } from './items.js';
+import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode, makeItem, itemKey, makeIngredient, ChopRig } from './items.js';
+import { makeBoard, makeKnife, makePan, makePot, makeBurner } from './tools.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { STYLE, buildBackdrop } from './env.js';
 import { treehouse } from './treehouse.js';
 
@@ -157,34 +159,35 @@ export class Kitchen {
       this.fx.push({ belt: tex, beltIdx: t.belt });
     }
     switch (t.st) {
-      case 'board':
-        add(box(), mat(0xd8a868, { rough: 0.7 }), [0, 0.025, 0], [0.62, 0.05, 0.5]);
-        add(box(), mat(0xb88848, { rough: 0.7 }), [0, 0.03, -0.18], [0.5, 0.012, 0.03]);
-        P.knife = add(box(), mat(0xdfe6ee, { metal: 0.8, rough: 0.25 }), [0.26, 0.06, 0.1], [0.04, 0.012, 0.3], [0, 0.4, 0]);
+      case 'board': {
+        g.add(makeBoard());
+        const k = P.knife = makeKnife();
+        k.position.set(-0.13, 0.062, 0.212); k.rotation.set(0, Math.PI / 2 - 0.08, Math.PI / 2); k.scale.setScalar(1.25);
+        g.add(k);
         break;
+      }
       case 'pan': case 'pot': {
-        add(box(), dark, [0, 0.02, 0], [0.86, 0.04, 0.86]);
-        P.ring = add(tor(), new THREE.MeshStandardMaterial({ color: 0x3a3a3a, emissive: 0xff4a10, emissiveIntensity: 0 }), [0, 0.045, 0], [0.24, 0.24, 0.2], [Math.PI / 2, 0, 0]);
-        for (const s of [-1, 1]) add(cyl(12), mat(0x111111), [s * 0.3, 0.02, 0.38], [0.04, 0.04, 0.04], [Math.PI / 2, 0, 0]);
-        if (t.st === 'pan') {
-          add(cyl(28), mat(0x2a2a2e, { metal: 0.6, rough: 0.35 }), [0, 0.08, 0], [0.32, 0.07, 0.32]);
-          add(cyl(28), mat(0x3a3a40, { metal: 0.5, rough: 0.4 }), [0, 0.11, 0], [0.28, 0.01, 0.28]);
-          add(box(), mat(0x1a1a1a), [0.5, 0.1, 0], [0.4, 0.04, 0.06]);
-        } else {
-          add(cyl(28), steel, [0, 0.2, 0], [0.3, 0.32, 0.3]);
-          add(cyl(28), mat(0x8a929a, { metal: 0.6 }), [0, 0.36, 0], [0.27, 0.01, 0.27]);
-          for (const s of [-1, 1]) add(tor(), steel, [s * 0.32, 0.3, 0], [0.06, 0.06, 0.08], [0, Math.PI / 2, 0]);
-        }
+        add(new RoundedBoxGeometry(0.88, 0.045, 0.88, 2, 0.015), new THREE.MeshPhysicalMaterial({ color: 0x1c1d20, roughness: 0.25, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.1 }), [0, 0.022, 0]);
+        const bn = makeBurner();
+        bn.group.position.y = 0.04; g.add(bn.group);
+        P.ring = bn.ring;
+        for (const s of [-1, 1]) add(cyl(16), mat(0x111111, { rough: 0.4 }), [s * 0.3, 0.02, 0.4], [0.045, 0.03, 0.045], [Math.PI / 2, 0, 0]);
+        if (t.st === 'pan') { const pan = makePan(); pan.position.y = 0.05; pan.rotation.y = -0.4; g.add(pan); }
+        else { const pot = makePot(); pot.position.y = 0.0; g.add(pot); }
         break;
       }
       case 'oven': {
         g.position.y = 0;
-        add(box(), mat(0x3a3e44, { metal: 0.5, rough: 0.4 }), [0, 0.55, 0], [0.96, 1.1, 0.96]);
-        add(box(), mat(0x6a727c, { metal: 0.7, rough: 0.3 }), [0, 1.12, 0], [1.0, 0.06, 1.0]);
-        P.door = add(box(), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, emissive: 0xff7a20, emissiveIntensity: 0.05, roughness: 0.1 }), [0, 0.5, 0.485], [0.66, 0.42, 0.02]);
-        add(box(), steel, [0, 0.8, 0.5], [0.6, 0.04, 0.04]);
-        for (let i = 0; i < 3; i++) add(cyl(12), mat(0x111111), [-0.25 + i * 0.25, 0.96, 0.49], [0.05, 0.03, 0.05], [Math.PI / 2, 0, 0]);
-        add(cyl(10), mat(0x6a727c, { metal: 0.6 }), [0.3, 1.5, -0.3], [0.08, 0.8, 0.08]);
+        const enamel = new THREE.MeshPhysicalMaterial({ color: 0x34383e, roughness: 0.35, metalness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.2 });
+        const chrome = new THREE.MeshPhysicalMaterial({ color: 0xd0d5da, roughness: 0.18, metalness: 0.7 });
+        add(new RoundedBoxGeometry(0.96, 1.08, 0.94, 3, 0.04), enamel, [0, 0.56, 0]);
+        add(new RoundedBoxGeometry(1.0, 0.06, 0.98, 2, 0.02), mat(0x5a6068, { metal: 0.6, rough: 0.35 }), [0, 1.12, 0]);
+        add(new RoundedBoxGeometry(0.74, 0.5, 0.03, 2, 0.012), enamel, [0, 0.5, 0.475]);
+        P.door = add(new RoundedBoxGeometry(0.56, 0.3, 0.02, 2, 0.01), new THREE.MeshPhysicalMaterial({ color: 0x0c0c0e, emissive: 0xff7a20, emissiveIntensity: 0.05, roughness: 0.05, clearcoat: 1 }), [0, 0.52, 0.49]);
+        add(new THREE.CylinderGeometry(0.016, 0.016, 0.6, 12), chrome, [0, 0.8, 0.53], 1, [0, 0, Math.PI / 2]);
+        for (const x of [-0.27, 0.27]) add(new THREE.CylinderGeometry(0.012, 0.012, 0.05, 8), chrome, [x, 0.8, 0.505], 1, [Math.PI / 2, 0, 0]);
+        for (let i = 0; i < 3; i++) { add(new THREE.CylinderGeometry(0.045, 0.05, 0.035, 20), mat(0x18181a, { rough: 0.4 }), [-0.25 + i * 0.25, 0.97, 0.48], 1, [Math.PI / 2, 0, 0]); add(box(), chrome, [-0.25 + i * 0.25, 0.97, 0.5], [0.012, 0.06, 0.012]); }
+        add(new THREE.CylinderGeometry(0.07, 0.07, 0.8, 16), mat(0x5a6068, { metal: 0.6, rough: 0.35 }), [0.3, 1.5, -0.3]);
         break;
       }
       case 'trash': {
@@ -657,8 +660,7 @@ export class Kitchen {
       const I = INGREDIENTS[s.item.ing];
       this.squash.set(y * L.W + x, 1);
       const cx = this.cx(x), cz = this.cz(y);
-      for (let k = 0; k < 6; k++) this.parts.chunk({ x: cx + (Math.random() - 0.5) * 0.15, y: CH + 0.12, z: cz + (Math.random() - 0.5) * 0.15, vx: (Math.random() - 0.5) * 2.2, vy: 1.4 + Math.random() * 1.6, vz: (Math.random() - 0.5) * 2.2, color: [I.c1, I.c2, I.c3][k % 3], s: 0.022 + Math.random() * 0.018, life: 0.7, floor: CH + 0.06 });
-      this.parts.puff({ x: cx, y: CH + 0.1, z: cz, vy: 0.4, life: 0.35, s0: 0.12, s1: 0.4, a: 0.5, color: 0xffffff });
+      for (let k = 0; k < 4; k++) this.parts.puff({ x: cx + (Math.random() - 0.5) * 0.1, y: CH + 0.14, z: cz + (Math.random() - 0.5) * 0.1, vx: (Math.random() - 0.5) * 1.6, vy: 1 + Math.random() * 1.2, vz: (Math.random() - 0.5) * 1.6, g: 7, life: 0.45, s0: 0.022, s1: 0.012, a: 0.9, color: k % 2 ? I.c2 : I.c1, floor: CH + 0.06 });
     }
 
     // items on tiles
@@ -671,7 +673,7 @@ export class Kitchen {
         const key = itemKey(it);
         let e = this.itemMeshes.get(i);
         if (!e || e.key !== key) {
-          if (e) { e.mesh.removeFromParent(); if (e.pile) e.pile.removeFromParent(); }
+          if (e) { e.mesh.removeFromParent(); if (e.rig) e.rig.dispose(); }
           const mesh = makeItem(it);
           e = { key, mesh };
           this.itemMeshes.set(i, e);
@@ -689,20 +691,20 @@ export class Kitchen {
         }
         if (tl.st === 'pan' || tl.st === 'pot') e.mesh.position.y += Math.sin(rt * 9 + i) * 0.006;
         e.mesh.rotation.y = tl.st === 'board' ? 0.3 : 0;
-        // chopping in progress: the whole ingredient shrinks while a pile of pieces grows beside it
+        // chopping in progress: the knife takes the food apart slice by slice (see ChopRig)
         const sq = this.squash.get(i) || 0;
         if (sq > 0) this.squash.set(i, Math.max(0, sq - dt * 7));
         if (tl.st === 'board' && it.kind === 'ing' && it.s === 'raw' && it.p > 0) {
-          if (!e.pile) { e.pile = makeItem({ kind: 'ing', ing: it.ing, s: 'chopped' }); this.home(tl.x, tl.y).add(e.pile); }
-          const k = Math.min(1, it.p);
-          e.mesh.scale.set(1 - k * 0.45, (1 - k * 0.5) * (1 - sq * 0.35), 1 - k * 0.45);
-          e.mesh.position.x -= 0.08;
-          e.pile.visible = true;
-          e.pile.scale.setScalar(0.25 + k * 0.75);
-          e.pile.position.set(this.cx(tl.x) + 0.13, base, this.cz(tl.y) + 0.06);
+          if (!e.rig) { e.rig = new ChopRig(it.ing); this.home(tl.x, tl.y).add(e.rig.group); }
+          e.mesh.visible = false;
+          e.rig.group.position.copy(e.mesh.position);
+          e.rig.group.rotation.y = e.mesh.rotation.y;
+          e.rig.group.scale.set(1, 1 - sq * 0.04, 1);
+          e.rig.update(it.p, dt);
         } else {
-          e.mesh.scale.set(1, 1 - sq * 0.25, 1);
-          if (e.pile) { e.pile.removeFromParent(); e.pile = null; }
+          e.mesh.visible = true;
+          e.mesh.scale.set(1, 1 - sq * 0.12, 1);
+          if (e.rig) { e.rig.dispose(); e.rig = null; }
         }
       }
       // progress bars
@@ -740,7 +742,7 @@ export class Kitchen {
         if (tl.st === 'sink' && emit && sim.players.some((p) => p.act === 'wash' && p.target && p.target[0] === tl.x && p.target[1] === tl.y)) this.washFx(tl, edt);
       }
     });
-    for (const [i, e] of this.itemMeshes) if (!seen.has(i) && Number.isInteger(i)) { e.mesh.removeFromParent(); if (e.pile) e.pile.removeFromParent(); this.itemMeshes.delete(i); }
+    for (const [i, e] of this.itemMeshes) if (!seen.has(i) && Number.isInteger(i)) { e.mesh.removeFromParent(); if (e.rig) e.rig.dispose(); this.itemMeshes.delete(i); }
 
     if (emit) for (const p of sim.players) if (p.act === 'spray') this.sprayFx(p, edt);
     // belts scroll

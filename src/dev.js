@@ -1,4 +1,5 @@
-// Developer console: press ` (backquote) to open, type `help`. Also reachable as window.dev.run('...').
+// Developer console: press ` (backquote) to open, type `help`. Also in the browser's F12 console:
+// dev.help() lists every command, and each one is a function there too, e.g. dev.coins(500), dev.play('3-4').
 import { OUTFITS, BOXES, UPGRADES, UPGRADE_MAX, WORLDS, cleanUpg } from './config.js';
 import { writeSave, openBox } from './save.js';
 import { starThresholds } from './sim.js';
@@ -25,7 +26,8 @@ const HELP = `commands:
 export function installDev(app) {
   let box = null, log = null, fpsEl = null;
   const hist = []; let hi = 0;
-  const out = (msg, cls = '') => { if (!log) return; const d = document.createElement('div'); d.className = cls; d.textContent = msg; log.appendChild(d); log.scrollTop = 1e9; };
+  let viaConsole = false; // a call from the F12 console prints there instead of the in-game panel
+  const out = (msg, cls = '') => { if (viaConsole) { (cls === 'err' ? console.warn : console.log)(msg); return; } if (!log) return; const d = document.createElement('div'); d.className = cls; d.textContent = msg; log.appendChild(d); log.scrollTop = 1e9; };
   const s = () => app.save;
   const save = () => { writeSave(s()); if (app.me && app.me()) app.setProfile({ upg: cleanUpg(s().upg) }); else if (app.ui.renderSide) app.ui.renderSide(); };
   const lvl = (str) => {
@@ -121,5 +123,21 @@ export function installDev(app) {
     setTimeout(() => inp.focus(), 0);
   };
   addEventListener('keydown', (e) => { if (e.key === '`' && !box && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); toggle(); } });
-  return { run, toggle };
+  // F12 console API: dev.help() and one function per command, arguments as in the panel
+  const api = { run, toggle };
+  const call = (cmd, args) => {
+    viaConsole = true;
+    try { C[cmd](...args.map((a) => (a == null ? a : String(a)))); } catch (e) { console.warn(e.message); } finally { viaConsole = false; }
+  };
+  for (const cmd of Object.keys(C)) if (cmd !== 'clear') api[cmd] = (...args) => call(cmd, args);
+  api.help = () => {
+    const lines = HELP.split('\n').slice(1).filter((l) => !/^\s*clear\b/.test(l)).map((l) => {
+      const m = l.match(/^\s{2}(\S+)((?:\s+[<\[][^>\]]+[>\]])*)\s{2,}(.*)$/);
+      if (!m) return l.replace(/^\s{2}reset yes\s+/, "  dev.reset('yes')".padEnd(46));
+      const args = (m[2].match(/[<\[][^>\]]+[>\]]/g) || []).map((a) => (a.startsWith('[') ? a.slice(1, -1) + '?' : a.slice(1, -1)));
+      return `  dev.${m[1]}(${args.join(', ')})`.padEnd(46) + m[3];
+    });
+    console.log(`%cPanic on the Plates dev commands%c\n${lines.join('\n')}\n\nExamples: dev.coins(500)  dev.give('all')  dev.box('gold', 5)  dev.play('3-4')  dev.win(3)  dev.music('pirate', 2, 'final')\nThe same commands work in the in-game console (press \` and type them without dev. or brackets).`, 'font-weight:bold;font-size:13px;color:#ffb21a', '');
+  };
+  return api;
 }
