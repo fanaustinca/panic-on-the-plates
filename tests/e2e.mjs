@@ -200,6 +200,56 @@ await T('multiplayer: quick match pairs two tabs, world vote + dice, start, move
   await A.page.close(); await B.page.close();
 });
 
+await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', async () => {
+  const { page, errors } = await openPage(browser, base);
+  // a fake standard gamepad the test can press buttons on
+  await page.evaluate(() => {
+    const pad = { index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) };
+    window.__pad = pad;
+    navigator.getGamepads = () => [pad, null, null, null];
+  });
+  await page.evaluate(() => { PANIC.app.save.name = 'Couch'; PANIC.app.solo(); });
+  await page.waitForSelector('[data-add="kb2"]');
+  await page.click('[data-add="kb2"]');
+  await page.waitForFunction(() => PANIC.app.couch.length === 1);
+  // the pad presses Y in the lobby to join
+  await page.evaluate(() => { window.__pad.buttons[3].pressed = true; });
+  await page.waitForFunction(() => PANIC.app.couch.length === 2, { timeout: 5000 });
+  await page.evaluate(() => { window.__pad.buttons[3].pressed = false; });
+  assert(await page.evaluate(() => document.querySelectorAll('.pcard.couchc').length === 2), 'two couch cards');
+  await page.evaluate(() => PANIC.app.startMatch('0-2'));
+  await waitPlay(page);
+  const ids = await page.evaluate(() => PANIC.game.locals.map((l) => l.id + ':' + l.ctrl));
+  assert(ids.length === 3 && ids[0].endsWith('kb1|free') && ids.some((x) => x.endsWith('kb2')) && ids.some((x) => x.endsWith('pad0')), 'three local cooks: ' + ids);
+  const pos = () => page.evaluate(() => PANIC.game.sim.players.map((p) => [p.x, p.y]));
+  const p0 = await pos();
+  await page.bringToFront();
+  await page.keyboard.down('KeyD'); await page.keyboard.down('ArrowLeft');
+  await page.evaluate(() => { window.__pad.axes[1] = -1; });
+  await page.waitForFunction((p0) => { const P = PANIC.game.sim.players; return Math.abs(P[0].x - p0[0][0]) > 0.4 && Math.abs(P[1].x - p0[1][0]) > 0.4 && Math.abs(P[2].y - p0[2][1]) > 0.2; }, { polling: 50, timeout: 20000 }, p0).catch(() => {});
+  await page.keyboard.up('KeyD'); await page.keyboard.up('ArrowLeft');
+  await page.evaluate(() => { window.__pad.axes[1] = 0; });
+  const p1 = await pos();
+  assert(p1[0][0] > p0[0][0] + 0.3, 'P1 moved right with D');
+  assert(p1[1][0] < p0[1][0] - 0.3, 'P2 moved left with the arrow');
+  assert(Math.abs(p1[2][1] - p0[2][1]) > 0.15, 'the gamepad cook moved with the stick');
+  // dash on each controller
+  await page.keyboard.press('ShiftLeft'); await page.keyboard.press('Period');
+  await page.evaluate(() => { window.__pad.buttons[5].pressed = true; });
+  await page.waitForFunction(() => PANIC.game.sim.players.every((p) => p.dn >= 1), { polling: 50, timeout: 10000 }).catch(() => {});
+  await page.evaluate(() => { window.__pad.buttons[5].pressed = false; });
+  assert(await page.evaluate(() => PANIC.game.sim.players.every((p) => p.dn >= 1)), 'all three dashed');
+  // throw: P1 holds food and presses Q
+  await page.evaluate(() => { const g = PANIC.game, p = g.sim.players[0]; p.held = { kind: 'ing', ing: g.L.recipes[0].ings[0], s: 'raw', p: 0 }; });
+  await page.keyboard.press('KeyQ');
+  await page.waitForFunction(() => PANIC.game.sim.players[0].stats.throws === 1, { polling: 50, timeout: 5000 });
+  await page.waitForFunction(() => !PANIC.game.sim.flying.length, { polling: 50, timeout: 10000 });
+  assert(!(await page.evaluate(() => PANIC.game.sim.players[0].held)), 'the food left P1');
+  await shot(page, 'e2e-couch.png');
+  assert(!errors.length, errors.join('\n'));
+  await page.close();
+});
+
 await T('full round ends with results and saves stars', async () => {
   const { page, errors } = await openPage(browser, base);
   await page.evaluate(() => { PANIC.app.solo(); PANIC.app.startMatch('0-0'); });

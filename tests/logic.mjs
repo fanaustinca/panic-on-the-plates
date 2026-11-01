@@ -2,7 +2,7 @@
 // actually be cooked and delivered through the real Sim rules (cook teleported between stations).
 import { WORLDS, INGREDIENTS, T } from '../src/config.js';
 import { buildLevel, validate } from '../src/levels.js';
-import { Sim, movePlayer, starsFor, findTarget, starThresholds } from '../src/sim.js';
+import { Sim, movePlayer, starsFor, findTarget, starThresholds, rushAt, rushStart } from '../src/sim.js';
 import { moverX, floeAt } from '../src/hazards.js';
 import { levelUnlocked, outfitUnlocked, openBox, skipLevel } from '../src/save.js';
 import { OUTFITS, TIERS, BOXES, upgMul, perkMul } from '../src/config.js';
@@ -454,6 +454,99 @@ test('gift boxes hand out outfits, upgrades or coins, and bigger boxes are rarer
   assert(new Set(s.owned).size === s.owned.length, 'never the same outfit twice');
   const poor = { ...fresh(), coins: 10 };
   assert(openBox(poor, 'bronze', rand) === null && poor.coins === 10, 'cannot buy what you cannot afford');
+});
+
+test('the diamond box: rarest outfits, and the only source of the diamond-exclusive chefs', () => {
+  globalThis.localStorage = { setItem() {}, getItem() { return null; } };
+  let seed = 11;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const fresh = () => ({ stars: {}, best: {}, coins: 1e6, upg: {}, owned: [], skipped: {} });
+  const ex = OUTFITS.filter((o) => o.diamond).map((o) => o.id);
+  assert(ex.length === 3, 'three diamond-exclusive outfits');
+  const g = fresh();
+  for (let k = 0; k < 300; k++) openBox(g, 'gold', rand);
+  assert(!g.owned.some((id) => ex.includes(id)), 'gold boxes never give diamond outfits');
+  const d = fresh();
+  const kinds = [];
+  for (let k = 0; k < 40; k++) { const r = openBox(d, 'diamond', rand); kinds.push(r.kind); if (r.tier != null) assert(r.tier >= 2, 'diamond box gives epic or better'); }
+  assert(ex.every((id) => d.owned.includes(id)), 'diamond outfits found within 40 diamond boxes');
+  assert(!kinds.includes('coins') || kinds.filter((k) => k === 'coins').length < 4, 'mostly prizes, not coins');
+  assert(BOXES.find((b) => b.id === 'diamond').cost > BOXES.find((b) => b.id === 'gold').cost, 'priced above gold');
+});
+
+test('dash: a quick burst along the stick, then a cooldown', () => {
+  const L = buildLevel(0, 0);
+  const sim = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }], 1);
+  const p = sim.players[0];
+  sim.t = 1; sim.phase = 'play';
+  const x0 = p.x, y0 = p.y;
+  movePlayer(L, p, { mx: 1, my: 0, dash: true }, 1 / 60, 1);
+  assert(p.dn === 1 && p.dashT > 0 && Math.abs(p.vx) > T.speed * 2, 'dash bursts: ' + p.vx);
+  movePlayer(L, p, { mx: 1, my: 0, dash: true }, 1 / 60, 1);
+  assert(p.dn === 1, 'no second dash during the cooldown');
+  for (let i = 0; i < 60; i++) movePlayer(L, p, { mx: 0, my: 0 }, 1 / 60, 1);
+  assert(Math.hypot(p.x - x0, p.y - y0) > 0.4, 'dash covers ground');
+  movePlayer(L, p, { mx: 0, my: 1, dash: true }, 1 / 60, 1);
+  assert(p.dn === 2, 'dash again after the cooldown');
+});
+
+test('throwing: teammates catch food, counters and cookers catch it too, the floor splats it', () => {
+  const L = buildLevel(0, 2);
+  const roster = [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }, { id: 'b', name: 'B', outfit: 'chef', color: 1 }];
+  const sim = new Sim(L, roster, 3);
+  sim.t = 5; sim.phase = 'play';
+  const [a, b] = sim.players;
+  const fl = L.tiles.filter((t) => t.k === 'floor');
+  const open = fl.find((t) => fl.some((q) => q.y === t.y && q.x === t.x + 2) && fl.some((q) => q.y === t.y && q.x === t.x + 1));
+  assert(open, 'a straight run of floor');
+  Object.assign(a, { x: open.x + 0.5, y: open.y + 0.5, fx: 1, fy: 0, held: { kind: 'ing', ing: L.recipes[0].ings[0], s: 'raw', p: 0 } });
+  Object.assign(b, { x: open.x + 2.5, y: open.y + 0.5, held: null });
+  assert(sim.throwItem('a') && !a.held && sim.flying.length === 1, 'thrown');
+  for (let i = 0; i < 60 && sim.flying.length; i++) sim.stepFlying(1 / 60);
+  assert(b.held && b.held.kind === 'ing' && b.stats.catches === 1, 'caught by the teammate');
+  // plates, extinguishers cannot be thrown
+  b.held = { kind: 'plate', n: 1, c: [], dirty: false };
+  assert(!sim.throwItem('b'), 'plates are not throwable');
+  // a chopped ingredient thrown at its own cooker starts cooking
+  const ing = WORLDS[0].ingredients.find((i) => i.method === 'pan');
+  const pan = L.stations.find((t) => t.st === 'pan');
+  if (pan) {
+    const f = { id: 99, item: { kind: 'ing', ing: ing.id, s: 'chopped', p: 0 }, x: pan.x + 0.5, y: pan.y + 0.5, z: 0.5, vx: 0, vy: 0, vz: 0, pid: 'a', age: 1 };
+    sim.flying.push(f); sim.events.length = 0;
+    sim.stepFlying(1 / 60);
+    assert(sim.st(pan.x, pan.y).item && sim.events.some((e) => e.type === 'cookstart'), 'lands in the pan and starts cooking');
+  }
+  // on the floor: splat
+  a.held = { kind: 'ing', ing: ing.id, s: 'raw', p: 0 }; b.x = 999;
+  sim.events.length = 0;
+  sim.throwItem('a');
+  for (let i = 0; i < 120 && sim.flying.length; i++) sim.stepFlying(1 / 60);
+  assert(!sim.flying.length, 'thrown food always comes down');
+});
+
+test('golden orders pay double, and rush hour doubles tips mid-shift', () => {
+  const L = buildLevel(2, 5);
+  assert(rushStart(L) < L.duration - 25 && rushStart(L) > L.duration * 0.4, 'rush hour sits past half time');
+  assert(rushAt(L, rushStart(L) + 1) && !rushAt(L, rushStart(L) - 1), 'rush window');
+  assert(!Number.isFinite(rushStart(buildLevel(2, 0))), 'no rush hour on the first level');
+  const sim = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }], 5);
+  sim.phase = 'play';
+  let golds = 0;
+  for (let k = 0; k < 400; k++) { sim.t = 30 + k; if (sim.spawnOrder().gold) golds++; }
+  assert(golds > 25 && golds < 120, 'a golden order now and then: ' + golds);
+  const deliverWith = (gold, t) => {
+    const s2 = new Sim(L, [{ id: 'a', name: 'A', outfit: 'chef', color: 0 }], 5);
+    s2.phase = 'play'; s2.t = t;
+    const r = 0, rc = L.recipes[r];
+    s2.orders = [{ id: 1, r, t0: t, lim: 100, gold }];
+    const p = s2.players[0];
+    p.held = { kind: 'plate', n: 1, dirty: false, c: rc.ings.map((ing) => ({ ing, s: INGREDIENTS[ing].method === 'chop' ? 'chopped' : 'cooked' })) };
+    s2.deliver(p, 0, 0);
+    return s2.score;
+  };
+  const base = deliverWith(0, 30), gold = deliverWith(1, 30), rush = deliverWith(0, rushStart(L) + 2);
+  assert(gold === base * 2, `golden pays double: ${base} -> ${gold}`);
+  assert(rush > base, `rush pays more tips: ${base} -> ${rush}`);
 });
 
 test('factory kitchens have nowhere to fall out', () => {

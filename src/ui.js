@@ -1,12 +1,14 @@
 // DOM UI: title, lobby (outfits, colours, level vote), modals, the in-game HUD and results.
 import * as THREE from 'three';
-import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRecipes, LEVEL_RECIPES, VERSION, UPGRADES, UPGRADE_MAX, TIERS, BOXES, perkText } from './config.js';
+import { WORLDS, OUTFITS, COLORS, SLOT_COLORS, INGREDIENTS, finalState, worldRecipes, LEVEL_RECIPES, VERSION, UPGRADES, UPGRADE_MAX, TIERS, BOXES, perkText, SKINS } from './config.js';
 import { buildLevel, levelTitle, MP_LEVEL } from './levels.js';
 import { envAt, cuckooAt } from './hazards.js';
+import { rushAt, rushStart, RUSH_LEN } from './sim.js';
 import { ingIcon, dishIcon, chefIcon } from './render/thumbs.js';
 import { loadSave, writeSave, totalStars, levelUnlocked, outfitUnlocked } from './save.js';
 const lvLabel = (wi, li) => (li === MP_LEVEL ? `${wi + 1}-MP` : `${wi + 1}-${li + 1}`);
 import { sfx } from './audio.js';
+import { ctrlLabel, keyNames } from './input.js';
 
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -176,15 +178,18 @@ export class UI {
   howTo() {
     this.modal(`<h2>How to cook</h2>
       <div class="howto">
-        <div><b>Move</b><br><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to run</div>
+        <div><b>Move</b><br><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows to run</div>
         <div><b>Jump</b><br><kbd>Space</kbd> to hop gaps &amp; hazards</div>
-        <div><b>Interact</b><br>Tap <kbd>Enter</kbd> to grab, place, cook, serve</div>
-        <div><b>Work</b><br>Hold <kbd>Enter</kbd> to chop, wash, or spray</div>
+        <div><b>Interact</b><br>Tap <kbd>Enter</kbd> to grab, place, cook, serve. Hold it to chop, wash or spray</div>
+        <div><b>Dash &amp; throw</b><br><kbd>Shift</kbd> dashes. <kbd>Q</kbd> throws the food in your hands: to a teammate, onto a counter, or straight into its pan</div>
         <div><b>1.</b> Grab ingredients from the crates and <b>chop</b> them on a board.</div>
         <div><b>2.</b> Cook chopped food in the <b>pan</b>, <b>pot</b> or <b>oven</b> its ticket shows.</div>
         <div><b>3.</b> Combine everything on a <b>clean plate</b> and serve at the <b>ORDER UP</b> window.</div>
         <div><b>4.</b> Dirty plates come back. <b>Wash</b> them in the sink!</div>
         <div><b>Fire!</b> Overcooked food bursts into flames that spread. Grab the red <b>extinguisher</b> and hold Enter.</div>
+        <div><b>Golden orders</b> A food critic orders now and then: less patience, <b>double points</b>. Past half time comes <b>Rush Hour</b>: orders pour in and tips are doubled.</div>
+        <div><b>Couch co-op</b> In a solo kitchen add a <b>keyboard cook</b> (you keep WASD + <kbd>E</kbd>, they get the arrows + <kbd>Enter</kbd>) or press <kbd>Y</kbd> on a <b>gamepad</b>: up to 4 cooks on one screen.</div>
+        <div><b>Gamepad</b> Stick to move, <kbd>A</kbd> jump, <kbd>X</kbd> interact (hold to work), <kbd>Y</kbd> throw, bumpers dash, <kbd>Start</kbd> menu.</div>
         <div><b>Stars</b> Every world is open. Earn at least one star on a level to open the next one, and clear a world's first level for its outfit. Quick serves earn tips &amp; combos.</div>
       </div>
       <div class="actions"><button class="btn mustard" data-close>Let's cook!</button></div>`);
@@ -262,9 +267,27 @@ export class UI {
     members.forEach((m, i) => {
       const lv = m.vote != null && String(m.vote).includes('-') ? String(m.vote).split('-').map(Number) : null;
       const wv = app.multi && m.vote != null && /^\d$/.test(String(m.vote)) ? WORLDS[+m.vote].name : null;
-      P.appendChild(el(`<div class="pcard" style="--c:${hex(SLOT_COLORS[i])}"><img src="${chefIcon(m.outfit, COLORS[m.color % COLORS.length], m.skin)}" alt="" /><div><div class="nm">${esc(m.name)}${m.id === app.selfId ? ' <span style="color:var(--muted);font-size:12px">(you)</span>' : ''}</div><div class="sub">${m.host ? 'Host · ' : ''}${wv ? `Wants ${esc(wv)}` : lv ? `Picked ${lv[0] + 1}-${lv[1] + 1}` : 'No vote yet'}</div></div><span class="rd ${m.ready || m.host ? 'on' : ''}">${m.host ? 'HOST' : m.ready ? 'READY' : 'WAITING'}</span></div>`));
+      if (m.local) {
+        // a couch co-op cook on this machine: shows its controls, and you can restyle or remove it here
+        const card = el(`<div class="pcard couchc" style="--c:${hex(SLOT_COLORS[i])}"><img src="${chefIcon(m.outfit, COLORS[m.color % COLORS.length], m.skin)}" alt="" /><div class="grow"><div class="nm">${esc(m.name)} <span class="ctl">${esc(ctrlLabel(m.local))}</span></div><div class="cyc"><button data-c="outfit">Outfit</button><button data-c="color">Colour</button><button data-c="skin">Skin</button></div></div><button class="x" title="Remove this cook">×</button></div>`);
+        card.querySelectorAll('[data-c]').forEach((b) => b.addEventListener('click', () => { sfx.ui(); app.cycleLocal(m.id, b.dataset.c); }));
+        card.querySelector('.x').addEventListener('click', () => { sfx.ui(); app.removeLocal(m.id); });
+        P.appendChild(card);
+        return;
+      }
+      const ctl = !room && app.couch.length ? ` <span class="ctl">${esc(ctrlLabel(app.selfCtrl()))}</span>` : '';
+      P.appendChild(el(`<div class="pcard" style="--c:${hex(SLOT_COLORS[i])}"><img src="${chefIcon(m.outfit, COLORS[m.color % COLORS.length], m.skin)}" alt="" /><div><div class="nm">${esc(m.name)}${m.id === app.selfId ? ' <span style="color:var(--muted);font-size:12px">(you)</span>' : ''}${ctl}</div><div class="sub">${m.host ? 'Host · ' : ''}${wv ? `Wants ${esc(wv)}` : lv ? `Picked ${lv[0] + 1}-${lv[1] + 1}` : 'No vote yet'}</div></div><span class="rd ${m.ready || m.host ? 'on' : ''}">${m.host ? 'HOST' : m.ready ? 'READY' : 'WAITING'}</span></div>`));
     });
-    for (let i = members.length; i < 4; i++) P.appendChild(el(`<div class="pcard empty">${room ? 'Waiting for a cook…' : 'Empty station'}</div>`));
+    if (!room && members.length < 4) {
+      // couch co-op: a second cook on the arrow keys, or one per gamepad
+      const kb2 = app.couch.some((c) => c.local === 'kb2');
+      const pads = app.input.padCount();
+      const box = el(`<div class="pcard empty couch"><div><b>Couch co-op</b><div class="sub">${pads ? `Press <kbd>Y</kbd> on a gamepad to join` : 'Plug in a gamepad and press <kbd>Y</kbd>, or share the keyboard'}</div></div><div class="couchbtns">${kb2 ? '' : '<button class="btn small sky" data-add="kb2">+ Keyboard cook</button>'}</div></div>`);
+      const b = box.querySelector('[data-add]');
+      if (b) b.addEventListener('click', () => { sfx.ui(); app.addLocal('kb2'); });
+      P.appendChild(box);
+    }
+    for (let i = members.length + (!room && members.length < 4 ? 1 : 0); i < 4; i++) P.appendChild(el(`<div class="pcard empty">${room ? 'Waiting for a cook…' : 'Empty station'}</div>`));
     const me = app.me();
     const ready = v.querySelector('#ready'), start = v.querySelector('#start');
     ready.style.display = app.isHost ? 'none' : '';
@@ -302,9 +325,9 @@ export class UI {
         const grid = el('<div class="outfits"></div>');
         for (const o of OUTFITS.filter((q) => q.tier === ti)) {
           const unlocked = outfitUnlocked(s, o.id);
-          const lock = o.world >= 0 ? `Clear ${WORLDS[o.world].name} 1` : 'Gift box';
+          const lock = o.world >= 0 ? `Clear ${WORLDS[o.world].name} 1` : o.diamond ? 'Diamond Box' : 'Gift box';
           const b = el(`<button class="outfit t${ti} ${me.outfit === o.id ? 'on' : ''} ${unlocked ? '' : 'locked'}" style="--tc:${tr.color}" data-lock="${esc(lock)}" title="${esc(perkText(o))}"><img src="${chefIcon(o.id, COLORS[me.color % COLORS.length], me.skin)}" alt="" />${esc(o.name)}<small>${esc(perkText(o))}</small></button>`);
-          b.addEventListener('click', () => { if (!unlocked) { sfx.wrong(); this.toast(o.world >= 0 ? `Clear level 1 of ${WORLDS[o.world].name} to earn this` : 'Find it in a gift box'); return; } sfx.ui(); app.setProfile({ outfit: o.id }); });
+          b.addEventListener('click', () => { if (!unlocked) { sfx.wrong(); this.toast(o.world >= 0 ? `Clear level 1 of ${WORLDS[o.world].name} to earn this` : o.diamond ? 'Only found in the Diamond Box' : 'Find it in a gift box'); return; } sfx.ui(); app.setProfile({ outfit: o.id }); });
           grid.appendChild(b);
         }
         side.appendChild(grid);
@@ -313,9 +336,9 @@ export class UI {
       const sw = el('<div class="swatches"></div>');
       COLORS.forEach((c, i) => { const d = el(`<div class="swatch ${me.color === i ? 'on' : ''}" style="background:${hex(c)}"></div>`); d.addEventListener('click', () => { sfx.ui(); app.setProfile({ color: i }); }); sw.appendChild(d); });
       side.appendChild(sw);
-      side.appendChild(el('<h3 style="margin-top:12px">Skin tone</h3>'));
+      side.appendChild(el('<h3 style="margin-top:12px">Skin colour</h3>'));
       const sk = el('<div class="swatches"></div>');
-      [0xf2c8a0, 0xd9a07a, 0xa86e48, 0x6e4a32].forEach((c, i) => { const d = el(`<div class="swatch ${me.skin === i ? 'on' : ''}" style="background:${hex(c)}"></div>`); d.addEventListener('click', () => { sfx.ui(); app.setProfile({ skin: i }); }); sk.appendChild(d); });
+      SKINS.forEach(({ c, name }, i) => { const d = el(`<div class="swatch ${me.skin === i ? 'on' : ''}" title="${name}" style="background:${hex(c)}"></div>`); d.addEventListener('click', () => { sfx.ui(); app.setProfile({ skin: i }); }); sk.appendChild(d); });
       side.appendChild(sk);
       return;
     }
@@ -367,7 +390,7 @@ export class UI {
         <div class="orders" id="orders"></div>
         <div class="alert" id="alert"></div>
         <div class="panel hint" id="hint"></div>
-        <div class="panel keys"><span><kbd>WASD</kbd> move · <kbd>Space</kbd> jump</span><span><kbd>Enter</kbd> grab / hold to work · <kbd>Esc</kbd> menu</span></div>
+        <div class="panel keys">${game.locals.map((lc, i) => { const k = keyNames(lc.ctrl), p = game.sim.player(lc.id); return `<span>${game.locals.length > 1 ? `<i class="pdot" style="background:${hex(SLOT_COLORS[p.slot % 4])}"></i>` : ''}<kbd>${k.move}</kbd> move · <kbd>${k.jump}</kbd> jump · <kbd>${k.act}</kbd> grab / hold to work · <kbd>${k.dash}</kbd> dash · <kbd>${k.throw}</kbd> throw${i === 0 ? ' · <kbd>Esc</kbd> menu' : ''}</span>`; }).join('')}</div>
         <div class="countdown" id="cd"></div>
       </div>`);
     this.root.appendChild(v);
@@ -416,7 +439,7 @@ export class UI {
       let tk = this.tickets.get(o.id);
       if (!tk) {
         const rc = L.recipes[o.r];
-        const node = el(`<div class="ticket"><div class="dn">${esc(rc.name)}</div><img class="dimg" src="${dishIcon(rc, finals(rc))}" alt="" /><div class="ings">${rc.ings.map((id) => { const m = INGREDIENTS[id].method; const [ic, col] = METHOD_ICON[m]; return `<span class="ing" title="${esc(INGREDIENTS[id].name)}"><img src="${ingIcon(id, 'raw')}" alt="" /><span class="m" style="background:${col}">${ICON[ic]}</span></span>`; }).join('')}</div><div class="bar"><i></i></div></div>`);
+        const node = el(`<div class="ticket ${o.gold ? 'gold' : ''}">${o.gold ? '<div class="critic">★ CRITIC ★ x2</div>' : ''}<div class="dn">${esc(rc.name)}</div><img class="dimg" src="${dishIcon(rc, finals(rc))}" alt="" /><div class="ings">${rc.ings.map((id) => { const m = INGREDIENTS[id].method; const [ic, col] = METHOD_ICON[m]; return `<span class="ing" title="${esc(INGREDIENTS[id].name)}"><img src="${ingIcon(id, 'raw')}" alt="" /><span class="m" style="background:${col}">${ICON[ic]}</span></span>`; }).join('')}</div><div class="bar"><i></i></div></div>`);
         O.appendChild(node);
         tk = { node, bar: node.querySelector('.bar i') };
         this.tickets.set(o.id, tk);
@@ -443,6 +466,7 @@ export class UI {
       else if (env.dilWarn) a = [ICON.clock, 'Time is warping…', '#c8a8ff'];
       else if (env.scale < 1) a = [ICON.clock, 'Time slowed', '#c8a8ff'];
       else if (env.scale > 1) a = [ICON.clock, 'Time rush!', '#ff8ad8'];
+      if (!a && rushAt(L, Math.max(0, t))) a = [ICON.bolt, `RUSH HOUR! Tips x2 · ${Math.ceil(rushStart(L) + RUSH_LEN - t)}s`, '#ff5ad8'];
       const ck = cuckooAt(L, Math.max(0, t));
       if (ck && ck.warn) a = [ICON.warn, 'CUCKOO! Jump or clear the lane!', '#ff3a6a'];
     }
@@ -462,7 +486,7 @@ export class UI {
   alert(text, kind) {
     const al = this.hud && this.hud.querySelector('#alert');
     if (!al) return;
-    this.setAlert(al, [kind === 'fire' ? ICON.fire : ICON.warn, text, kind === 'fire' ? '#ff6a2a' : '#ffcf3a']);
+    this.setAlert(al, [kind === 'fire' ? ICON.fire : kind === 'gold' ? ICON.star : kind === 'rush' ? ICON.bolt : ICON.warn, text, kind === 'fire' ? '#ff6a2a' : kind === 'rush' ? '#ff5ad8' : '#ffcf3a']);
     this.alertT = 2.6;
   }
 
@@ -527,12 +551,13 @@ export class UI {
   renderGifts(side) {
     const app = this.app, s = app.save;
     side.appendChild(el(`<h3>Gift boxes <span class="wallet-inline"><span class="coin">$</span>${s.coins}</span></h3>`));
-    side.appendChild(el('<p style="margin:0 0 8px;color:var(--muted);font-size:13.5px">Earn coins every shift. Each box holds one surprise: an <b>outfit</b>, an <b>upgrade</b> tier, or a bag of <b>coins</b>. Bigger boxes hold rarer outfits.</p>'));
+    side.appendChild(el('<p style="margin:0 0 8px;color:var(--muted);font-size:13.5px">Earn coins every shift. Each box holds one surprise: an <b>outfit</b>, an <b>upgrade</b> tier, or a bag of <b>coins</b>. Bigger boxes hold rarer outfits, and only the <b>Diamond Box</b> holds the three Diamond chefs.</p>'));
     const row = el('<div class="boxes"></div>');
     for (const B of BOXES) {
       const odds = B.tiers.map((w, ti) => (w ? `<i style="background:${TIERS[ti].color}" title="${TIERS[ti].name}"></i>` : '')).join('');
       const can = s.coins >= B.cost;
-      const card = el(`<div class="boxcard" style="--bc:${B.color}"><div class="gift sm"><div class="lid"></div><div class="body"></div></div><b>${esc(B.name)}</b><div class="odds">${odds}</div><button class="btn small ${can ? 'mint' : 'ghost'}"><span class="coin sm">$</span>${B.cost}</button></div>`);
+      const dia = B.exclusive ? 'diamond' : '';
+      const card = el(`<div class="boxcard ${dia}" style="--bc:${B.color}" title="${B.exclusive ? 'Epic or better, and the only box with the Diamond, Aurora and Inferno chefs' : ''}"><div class="gift sm ${dia}"><div class="lid"></div><div class="body"></div></div><b>${esc(B.name)}</b><div class="odds">${odds}</div><button class="btn small ${can ? 'mint' : 'ghost'}"><span class="coin sm">$</span>${B.cost}</button></div>`);
       card.querySelector('button').addEventListener('click', () => {
         const res = app.openGift(B.id);
         if (!res) { sfx.wrong(); this.toast(`Need ${B.cost - s.coins} more coins`); return; }
@@ -559,12 +584,13 @@ export class UI {
     const o = res.id && OUTFITS.find((q) => q.id === res.id);
     const tier = o ? TIERS[o.tier] : null;
     const inner = res.kind === 'skin' || res.kind === 'dupe'
-      ? `<img src="${chefIcon(o.id, COLORS[this.app.save.color % COLORS.length], this.app.save.skin)}" alt="" /><div class="tierlbl ${o.tier === 4 ? 'chroma-t' : ''}" style="color:${tier.color}">${tier.name} outfit</div><h2>${esc(o.name)}</h2><p>${esc(perkText(o))}</p>${res.kind === 'dupe' ? `<p class="dupe">Already yours: <span class="coin sm">$</span>+${res.coins} coins instead</p>` : ''}`
+      ? `<img src="${chefIcon(o.id, COLORS[this.app.save.color % COLORS.length], this.app.save.skin)}" alt="" /><div class="tierlbl ${o.tier === 4 ? 'chroma-t' : ''}" style="color:${tier.color}">${o.diamond ? 'Diamond exclusive' : `${tier.name} outfit`}</div><h2>${esc(o.name)}</h2><p>${esc(perkText(o))}</p>${res.kind === 'dupe' ? `<p class="dupe">Already yours: <span class="coin sm">$</span>+${res.coins} coins instead</p>` : ''}`
       : res.kind === 'upg'
         ? `<div class="upgs">${res.ids.map((id) => `<div class="ui-ic">${UPG_ICON[id]}</div>`).join('')}</div><div class="tierlbl" style="color:#5ad15a">Upgrade${res.ids.length > 1 ? 's' : ''}</div><h2>${res.ids.map((id) => esc(UPGRADES.find((g) => g.id === id).name)).join(' + ')}</h2><p>${res.ids.map((id) => `tier ${this.app.save.upg[id]}`).join(', ')}</p>`
         : `<div class="coinpile"><span class="coin">$</span></div><div class="tierlbl" style="color:#ffcf3d">Coins</div><h2>+${res.coins}</h2>`;
-    this.modal(`<div class="reveal" style="--bc:${B.color};--tc:${tier ? tier.color : '#ffcf3d'}">
-        <div class="gift big shaking"><div class="lid"></div><div class="body"></div></div>
+    const dia = B.exclusive ? 'diamond' : '';
+    this.modal(`<div class="reveal ${dia}" style="--bc:${B.color};--tc:${tier ? tier.color : '#ffcf3d'}">
+        <div class="gift big shaking ${dia}"><div class="lid"></div><div class="body"></div></div>
         <div class="prize">${inner}</div>
         <button class="btn mustard" data-close style="margin-top:10px">Nice!</button></div>`, (bg) => {
       const R = bg.querySelector('.reveal');
@@ -675,7 +701,8 @@ export class UI {
           <div class="stat"><b>${res.tips}</b><span>Tips earned</span></div>
           <div class="stat"><b>${res.players.reduce((a, p) => a + p.stats.fires, 0)}</b><span>Fires put out</span></div>
         </div>
-        <div class="team">${res.players.map((p) => `<div class="mate" style="--c:${hex(SLOT_COLORS[p.slot % 4])}"><img src="${chefIcon(p.outfit, COLORS[p.color % COLORS.length], p.skin)}" alt="" /><div><b>${esc(p.name)}</b>${p.stats.delivered} served · ${p.stats.chopped} chopped · ${p.stats.washed} washed${p.stats.kos ? ` · ${p.stats.kos} oops` : ''}</div></div>`).join('')}</div>
+        <div class="team">${res.players.map((p) => `<div class="mate" style="--c:${hex(SLOT_COLORS[p.slot % 4])}"><img src="${chefIcon(p.outfit, COLORS[p.color % COLORS.length], p.skin)}" alt="" /><div><b>${esc(p.name)}</b>${p.stats.delivered} served · ${p.stats.chopped} chopped · ${p.stats.washed} washed${p.stats.catches ? ` · ${p.stats.catches} caught` : ''}${p.stats.kos ? ` · ${p.stats.kos} oops` : ''}</div></div>`).join('')}</div>
+        ${res.golds ? `<div class="critics">${ICON.star} ${res.golds} food critic${res.golds > 1 ? 's' : ''} wowed</div>` : ''}
         <div class="acts">${isHost
           ? `<button class="btn ghost" data-a="lobby">${ICON.home} Lobby</button><button class="btn sky" data-a="replay">Replay</button>${hasNext ? `<button class="btn mustard big" data-a="next">${ICON.play} Next level</button>` : onSkip ? `<button class="btn mint" data-a="skip">${ICON.play} Watch ad to skip</button>` : ''}`
           : `<span style="color:var(--muted);align-self:center">Waiting for the host…</span><button class="btn ghost" data-a="leave">Leave</button>`}</div>

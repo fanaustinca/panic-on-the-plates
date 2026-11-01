@@ -38,6 +38,35 @@ export function mixc(a, b, t) { const A = a.isColor ? a.clone() : new THREE.Colo
 export function shadeC(c, k) { const C = c.isColor ? c.clone() : new THREE.Color(c); return k < 0 ? C.multiplyScalar(1 + k) : C.lerp(tmpC.set(0xffffff), k); }
 export const css = (c, k = 0) => '#' + (k ? shadeC(c, k) : new THREE.Color(c)).getHexString();
 
+// ---------------------------------------------------------------- art direction
+// Realistic shapes, cartoon finish: colours a touch more saturated and brighter, surface relief and
+// lacquer toned down, and a soft rim of light on every edge (the same finish the cooks have).
+export const LOOK = { sat: 1.3, lift: 0.22, bump: 0.45, clear: 0.55, rim: 0.26 };
+const hsl = {};
+/** push a colour towards the cartoon palette (in place) */
+export function toon(C) {
+  C.getHSL(hsl);
+  // more colour, and the deepest shadows lifted a little (cartoons have few true blacks)
+  C.setHSL(hsl.h, clamp(hsl.s * LOOK.sat), hsl.l < 0.4 ? hsl.l + (0.4 - hsl.l) * LOOK.lift : hsl.l);
+  return C;
+}
+/** soft fresnel rim (lighter version of the surface colour) patched into a standard/physical material */
+export function rimLight(m, k = LOOK.rim) {
+  if (m.userData.rim) return m;
+  m.userData.rim = k;
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      { float rimF = pow(1.0 - saturate(dot(geometryNormal, geometryViewDir)), 3.0);
+        reflectedLight.indirectDiffuse += mix(diffuseColor.rgb, vec3(1.0), 0.2) * rimF * ${k.toFixed(3)}; }`);
+  };
+  const key = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => key() + '|rim' + k;
+  m.needsUpdate = true;
+  return m;
+}
+
 // ---------------------------------------------------------------- caches
 const cache = new Map();
 export const once = (k, make) => { if (!cache.has(k)) cache.set(k, make()); return cache.get(k); };
@@ -68,7 +97,7 @@ export function surf(fn, { nu = 40, nv = 28, color = null, uv = [1, 1] } = {}) {
       n.normalize();
       nor.set([n.x, n.y, n.z], k * 3);
       uvs.set([u * uv[0], v * uv[1]], k * 2);
-      if (cols) { const C = color(u, v, p); cols.set([C.r, C.g, C.b], k * 3); }
+      if (cols) { const C = toon(color(u, v, p)); cols.set([C.r, C.g, C.b], k * 3); }
     }
   }
   // orient normals outward: away from the centre of each ring of constant v (robust for curled tubes)
@@ -177,13 +206,14 @@ export function fmat(key, o = {}) {
   const k = key + JSON.stringify(o, (n, v) => (v && v.isTexture ? v.uuid : v));
   if (!mats.has(k)) {
     const m = new THREE.MeshPhysicalMaterial({
-      color: o.color ?? 0xffffff, vertexColors: o.vc !== false, roughness: o.rough ?? 0.55, metalness: o.metal ?? 0,
-      clearcoat: o.clear ?? 0, clearcoatRoughness: o.clearRough ?? 0.25, sheen: o.sheen ?? 0, sheenRoughness: 0.6, sheenColor: o.sheenColor ?? 0xffffff,
-      map: o.map ?? null, bumpMap: o.bump ?? null, bumpScale: o.bumpScale ?? 1, side: o.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      color: o.color != null ? toon(new THREE.Color(o.color)) : 0xffffff, vertexColors: o.vc !== false, roughness: 0.25 + (o.rough ?? 0.55) * 0.75, metalness: o.metal ?? 0,
+      clearcoat: (o.clear ?? 0) * LOOK.clear, clearcoatRoughness: Math.max(0.2, o.clearRough ?? 0.25), sheen: o.sheen ?? 0, sheenRoughness: 0.6, sheenColor: o.sheenColor ?? 0xffffff,
+      map: o.map ?? null, bumpMap: o.bump ?? null, bumpScale: (o.bumpScale ?? 1) * LOOK.bump, side: o.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
       emissive: o.emissive ?? 0x000000, emissiveIntensity: o.ei ?? 1, emissiveMap: o.emap ?? null, transparent: (o.opacity ?? 1) < 1, opacity: o.opacity ?? 1,
-      flatShading: !!o.flat, iridescence: o.iri ?? 0, iridescenceIOR: 1.6, roughnessMap: o.rmap ?? null,
+      flatShading: !!o.flat, iridescence: (o.iri ?? 0) * 0.5, iridescenceIOR: 1.6, roughnessMap: o.rmap ?? null,
     });
     if (o.opacity < 1) m.depthWrite = o.depthWrite ?? true;
+    if (!o.metal) rimLight(m);
     mats.set(k, m);
   }
   return mats.get(k);

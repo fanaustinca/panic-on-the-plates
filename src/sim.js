@@ -8,6 +8,12 @@ import { envAt, supportAt, blockedAt, deadlyCells, strikesNear, cuckooAt, floeAt
 export const COUNTDOWN = 3.6; // "Ready" "Set" "Cook!"
 const COOKERS = { pan: 'pan', pot: 'pot', oven: 'oven' };
 const FIRE_IMMUNE = new Set(['window', 'sink', 'trash', 'return', 'bin']);
+const GOLD_CHANCE = 0.16;
+/** Rush hour: a 20 s burst a little past half time (double tips, orders twice as fast). A pure function of
+ *  the level clock, so every client knows without being told. Short tutorial levels skip it. */
+export const RUSH_LEN = 20;
+export const rushStart = (L) => (L.duration >= 120 && L.index > 0 ? Math.round(L.duration * 0.58) : Infinity);
+export const rushAt = (L, t) => t >= rushStart(L) && t < rushStart(L) + RUSH_LEN;
 
 // ---------------------------------------------------------------- movement (shared)
 
@@ -24,14 +30,22 @@ export function movePlayer(L, p, inp, dt, t) {
   const m = Math.hypot(mx, my);
   if (m > 1) { mx /= m; my /= m; }
   const speed = T.speed * env.scale * upgMul(p, 'speed');
+  // dash: a short burst along the stick (or the way the cook faces), then a cooldown
+  p.dashCd = Math.max(0, (p.dashCd || 0) - dt);
+  if (inp.dash && p.dashCd <= 0) {
+    const dl = m > 0.15 ? m : 0, dx = dl ? mx / dl : p.fx, dy = dl ? my / dl : p.fy;
+    p.vx = dx * speed * T.dashMul; p.vy = dy * speed * T.dashMul;
+    p.dashT = T.dashTime; p.dashCd = T.dashCd; p.dn = (p.dn || 0) + 1;
+    if (dl) { p.fx = dx; p.fy = dy; }
+  }
   let accel = T.accel * Math.max(0.6, env.scale);
   if (env.ice) accel = L.hz.ice.accel;
   if (env.lowG) accel = Math.min(accel, 7);
   if (p.z > 0.02) accel *= 0.55;
   const step = accel * dt;
   const toward = (v, target) => (Math.abs(target - v) <= step ? target : v + Math.sign(target - v) * step);
-  p.vx = toward(p.vx, mx * speed);
-  p.vy = toward(p.vy, my * speed);
+  if (p.dashT > 0) p.dashT = Math.max(0, p.dashT - dt); // dashing: keep the burst, no steering
+  else { p.vx = toward(p.vx, mx * speed); p.vy = toward(p.vy, my * speed); }
   if (m > 0.15) {
     const k = Math.min(1, dt * 16);
     let fx = p.fx + (mx / Math.max(m, 1e-6) - p.fx) * k, fy = p.fy + (my / Math.max(m, 1e-6) - p.fy) * k;
@@ -128,8 +142,9 @@ export function newPlayer(L, info, slot) {
   return {
     id: info.id, slot, name: info.name, outfit: info.outfit, color: info.color, skin: info.skin || 0, upg: cleanUpg(info.upg),
     x: sx + 0.5, y: sy + 0.5, z: 0, vx: 0, vy: 0, vz: 0, fx: 0, fy: 1, ex: 0, ey: 0,
-    held: null, ko: 0, life: 0, falling: false, work: false, act: null, target: null, inp: { mx: 0, my: 0, jump: false },
-    stats: { delivered: 0, chopped: 0, washed: 0, fires: 0, kos: 0 },
+    held: null, ko: 0, life: 0, falling: false, work: false, act: null, target: null, inp: { mx: 0, my: 0, jump: false, dash: false },
+    dashT: 0, dashCd: 0, dn: 0,
+    stats: { delivered: 0, chopped: 0, washed: 0, fires: 0, kos: 0, throws: 0, catches: 0 },
   };
 }
 
@@ -174,6 +189,8 @@ export class Sim {
     this.pending = []; // { at, kind: 'dirty'|'plate'|'ext' }
     this.events = [];
     this.monkeys = [];
+    this.flying = [];   // thrown ingredients in the air: { id, item, x, y, z, vx, vy, vz, pid, age }
+    this.golds = 0;
     this.nextMonkey = L.hz.monkeys ? L.hz.monkeys.start : Infinity;
     this.beltDir = L.belts.map((b) => b.dir);
     this.struck = new Set();
@@ -276,6 +293,66 @@ export class Sim {
     }
   }
 
+  /** Throw the ingredient in your hands the way you face: a teammate can catch it, or it lands on whatever
+   *  counter, board, plate or (if it is ready for one) pan, pot or oven it comes down on. */
+  throwItem(pid) {
+    const p = this.player(pid);
+    if (!p || p.ko > 0 || p.falling || this.phase !== 'play' || !p.held || p.held.kind !== 'ing') return false;
+    const it = p.held;
+    p.held = null; p.work = false;
+    this.flying.push({ id: this.nextOrderId++, item: it, x: p.x + p.fx * 0.3, y: p.y + p.fy * 0.3, z: p.z + 1.06, vx: p.fx * T.throwV + p.vx * 0.25, vy: p.fy * T.throwV + p.vy * 0.25, vz: T.throwVz, pid, age: 0 });
+    p.stats.throws++;
+    this.emit('throw', { pid, x: p.x, y: p.y });
+    return true;
+  }
+
+  stepFlying(dt) {
+    const L = this.L;
+    for (const f of this.flying.slice()) {
+      const done = (type, data = {}) => { this.flying.splice(this.flying.indexOf(f), 1); if (type) this.emit(type, { x: Math.floor(f.x), y: Math.floor(f.y), fx: f.x, fy: f.y, ing: f.item.ing, ...data }); };
+      f.age += dt;
+      const n = Math.max(1, Math.ceil((Math.hypot(f.vx, f.vy) * dt) / 0.15));
+      let ended = false;
+      for (let k = 0; k < n && !ended; k++) {
+        const h = dt / n;
+        const px = f.x, py = f.y;
+        f.vz -= T.throwG * h; f.x += f.vx * h; f.y += f.vy * h; f.z += f.vz * h;
+        // caught: an empty-handed cook in the way (not the thrower, for the first moment)
+        const c = this.players.find((p) => p.ko <= 0 && !p.falling && !p.held && (p.id !== f.pid || f.age > 0.4) && Math.hypot(p.x - f.x, p.y - f.y) < T.catchR && f.z > p.z + 0.15 && f.z < p.z + 1.6);
+        if (c) { c.held = f.item; c.work = false; c.stats.catches++; done('catch', { pid: c.id }); ended = true; break; }
+        const tx = Math.floor(f.x), ty = Math.floor(f.y), tl = this.tile(tx, ty);
+        if (!tl) { done('splat', { lost: true }); ended = true; break; }
+        if (blockedAt(L, tx, ty, this.t) && tl.k !== 'counter' && f.z < 2.6) { f.x = px; f.y = py; done('splat'); ended = true; break; }
+        const mi = (L.movers || []).findIndex((m) => { const mx = moverX(m, this.t); return f.x >= mx && f.x < mx + 1 && ty === m.y; });
+        if (mi >= 0 && f.z <= 1.0) { this.landMover(f, mi); done(null); ended = true; break; }
+        const top = tl.k === 'counter' ? (tl.st === 'oven' ? 1.2 : 1.0) : 0;
+        if (tl.k === 'counter' && f.z <= top) { if (!this.land(f, tl, tx, ty)) done('splat'); else done(null); ended = true; break; }
+        if (f.z <= 0) { done('splat', { lost: tl.k === 'void' }); ended = true; break; }
+      }
+    }
+  }
+
+  /** a thrown ingredient comes down on a counter; false if it cannot stay there */
+  land(f, tl, x, y) {
+    const s = this.st(x, y), I = f.item, ev = { pid: f.pid, x, y };
+    if (s.fire) return false;
+    if (COOKERS[tl.st]) {
+      if (!s.item && I.s === 'chopped' && INGREDIENTS[I.ing].method === COOKERS[tl.st]) { s.item = I; this.emit('cookstart', { ...ev, st: tl.st }); this.emit('landed', ev); return true; }
+      return false;
+    }
+    if (tl.st === 'trash') { this.emit('trash', ev); return true; }
+    if (!['counter', 'board', 'belt', 'plates'].includes(tl.st)) return false;
+    if (!s.item) { if (tl.st === 'plates') return false; s.item = I; s.bo = 0; this.emit('drop', ev); this.emit('landed', ev); return true; }
+    if (s.item.kind === 'plate' && canPlate(s.item, I)) { s.item.c.push({ ing: I.ing, s: I.s }); this.emit('plate', ev); this.emit('landed', ev); return true; }
+    return false;
+  }
+  landMover(f, mi) {
+    const s = this.mv[mi], I = f.item;
+    if (!s.item) { s.item = I; this.emit('landed', { pid: f.pid, x: Math.floor(f.x), y: Math.floor(f.y) }); return; }
+    if (s.item.kind === 'plate' && canPlate(s.item, I)) { s.item.c.push({ ing: I.ing, s: I.s }); this.emit('plate', { x: Math.floor(f.x), y: Math.floor(f.y) }); return; }
+    this.emit('splat', { x: Math.floor(f.x), y: Math.floor(f.y), fx: f.x, fy: f.y, ing: I.ing });
+  }
+
   /** A moving counter behaves like a plain counter that happens to travel. */
   pressMover(p, [x, y, mi]) {
     const s = this.mv[mi], H = p.held, pid = p.id;
@@ -318,14 +395,16 @@ export class Sim {
     const oldest = this.orders.slice().sort((a, b) => a.t0 - b.t0)[0];
     if (o === oldest) this.combo = Math.min(4, this.combo + (this.delivered ? 1 : 0)); else this.combo = 1;
     const left = Math.max(0, 1 - (this.t - o.t0) / o.lim);
-    const base = 10 + 10 * ings.length;
-    const tip = Math.ceil(left * 8) * this.combo;
+    const rush = rushAt(this.L, this.t);
+    let base = 10 + 10 * ings.length;
+    let tip = Math.ceil(left * 8) * this.combo * (rush ? 2 : 1);
+    if (o.gold) { base *= 2; tip *= 2; this.golds++; }
     this.score += base + tip; this.tips += tip; this.delivered++;
     p.stats.delivered++;
     this.orders.splice(this.orders.indexOf(o), 1);
     p.held = null;
     this.pending.push({ at: this.t + T.dirtyDelay, kind: 'dirty' });
-    this.emit('deliver', { x, y, pid: p.id, points: base, tip, combo: this.combo, oid: o.id, name: this.L.recipes[o.r].name });
+    this.emit('deliver', { x, y, pid: p.id, points: base, tip, combo: this.combo, oid: o.id, name: this.L.recipes[o.r].name, gold: !!o.gold, rush });
     if (!this.orders.length) this.nextOrderAt = Math.min(this.nextOrderAt, this.t + 1.5);
   }
 
@@ -384,7 +463,7 @@ export class Sim {
       }
       if (p.local) {
         const r = movePlayer(L, p, p.inp, dt, t);
-        p.inp.jump = false;
+        p.inp.jump = false; p.inp.dash = false;
         if (r === 'fell') this.ko(p, 'fell');
       } else if (p.falling && p.z < -1.4) this.ko(p, 'fell');
       if (p.ko > 0) continue;
@@ -477,6 +556,9 @@ export class Sim {
       }
     });
 
+    // thrown food
+    if (this.flying.length) this.stepFlying(dt);
+
     // monkeys
     if (L.hz.monkeys) this.stepMonkeys(dt);
 
@@ -510,9 +592,12 @@ export class Sim {
         this.emit('expire', { oid: o.id, name: L.recipes[o.r].name });
       }
     }
-    if ((t >= this.nextOrderAt || this.orders.length === 0) && this.orders.length < this.maxOrders && t < L.duration - 8) {
+    const rush = rushAt(L, t);
+    if (rush && !this.rushOn) { this.rushOn = true; this.emit('rush', { on: true }); if (t >= this.nextOrderAt - this.orderGap * 0.5) this.nextOrderAt = t; }
+    if (!rush && this.rushOn) { this.rushOn = false; this.emit('rush', { on: false }); }
+    if ((t >= this.nextOrderAt || this.orders.length === 0) && this.orders.length < this.maxOrders + (rush ? 1 : 0) && t < L.duration - 8) {
       this.spawnOrder();
-      this.nextOrderAt = t + this.orderGap * (0.8 + this.rand() * 0.4);
+      this.nextOrderAt = t + this.orderGap * (0.8 + this.rand() * 0.4) * (rushAt(L, t) ? 0.5 : 1);
     }
 
     if (t >= L.duration) {
@@ -529,8 +614,10 @@ export class Sim {
     if (this.t > L.duration * 0.4 && this.rand() < 0.35) r = n - 1 - Math.floor(this.rand() * Math.min(2, n));
     const ings = L.recipes[r].ings.length;
     const o = { id: this.nextOrderId++, r, t0: this.t, lim: Math.round((42 + 17 * ings) * this.party.lim) };
+    // a golden order now and then: a food critic. Less patience, double points and tips
+    if (this.t > 20 && this.rand() < GOLD_CHANCE) { o.gold = 1; o.lim = Math.round(o.lim * 0.8); }
     this.orders.push(o);
-    this.emit('order', { oid: o.id, name: L.recipes[r].name });
+    this.emit('order', { oid: o.id, name: L.recipes[r].name, gold: !!o.gold });
     return o;
   }
 
@@ -669,9 +756,10 @@ export class Sim {
     this.ts.forEach((s, i) => { if (s.item || s.fire || s.dirty || s.clean || s.wp) ts.push([i, s.item || 0, +(s.fire || 0).toFixed(2), s.dirty || 0, s.clean || 0, +(s.wp || 0).toFixed(2), +(s.bo || 0).toFixed(3)]); });
     return {
       t: +this.t.toFixed(3), ph: this.phase, sc: this.score, dl: this.delivered, fl: this.failed, tp: this.tips, cb: this.combo,
-      o: this.orders.map((o) => [o.id, o.r, +o.t0.toFixed(2), o.lim]),
+      o: this.orders.map((o) => [o.id, o.r, +o.t0.toFixed(2), o.lim, o.gold ? 1 : 0]),
+      fl: this.flying.map((f) => [f.id, +f.x.toFixed(2), +f.y.toFixed(2), +f.z.toFixed(2), f.item, +f.vx.toFixed(1), +f.vy.toFixed(1), +f.vz.toFixed(1)]),
       ts,
-      p: this.players.map((p) => ({ id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3), h: p.held || 0, ko: +p.ko.toFixed(2), lf: p.life, fa: p.falling ? 1 : 0, a: p.act, vx: +p.vx.toFixed(2), vy: +p.vy.toFixed(2) })),
+      p: this.players.map((p) => ({ id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3), h: p.held || 0, ko: +p.ko.toFixed(2), lf: p.life, fa: p.falling ? 1 : 0, a: p.act, vx: +p.vx.toFixed(2), vy: +p.vy.toFixed(2), dn: p.dn })),
       m: this.monkeys.map((m) => [m.id, +m.x.toFixed(2), +m.y.toFixed(2), +m.z.toFixed(2), m.item || 0, m.st, +(m.fx || 0).toFixed(2), +(m.fy || 1).toFixed(2)]),
       bd: this.beltDir,
       mv: this.mv.map((m) => m.item || 0),
@@ -681,7 +769,8 @@ export class Sim {
   /** Client side: adopt a host snapshot. Own cook keeps its locally predicted position. */
   applySnapshot(S, selfId) {
     this.t = S.t; this.phase = S.ph; this.score = S.sc; this.delivered = S.dl; this.failed = S.fl; this.tips = S.tp; this.combo = S.cb;
-    this.orders = S.o.map(([id, r, t0, lim]) => ({ id, r, t0, lim }));
+    this.orders = S.o.map(([id, r, t0, lim, gold]) => ({ id, r, t0, lim, gold }));
+    this.flying = (S.fl || []).map(([id, x, y, z, item, vx, vy, vz]) => ({ id, x, y, z, item, vx, vy, vz }));
     for (const s of this.ts) { s.item = null; s.fire = 0; s.dirty = 0; s.clean = 0; s.wp = 0; s.bo = 0; }
     for (const [i, item, fire, dirty, clean, wp, bo] of S.ts) Object.assign(this.ts[i], { item: item || null, fire, dirty, clean, wp, bo: bo || 0 });
     if (S.mv) S.mv.forEach((it, i) => { if (this.mv[i]) this.mv[i].item = it || null; });
@@ -695,6 +784,7 @@ export class Sim {
         continue;
       }
       p.net = sp; // remote cook: renderer interpolates
+      p.dn = sp.dn || 0;
       p.life = sp.lf; p.falling = !!sp.fa;
     }
     this.monkeys = S.m.map(([id, x, y, z, item, st, fx, fy]) => ({ id, x, y, z, item: item || null, st, fx, fy }));

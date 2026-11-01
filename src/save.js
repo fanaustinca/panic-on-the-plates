@@ -60,7 +60,12 @@ export function openBox(s, boxId, rand = Math.random, free = false) {
     const wsum = B.tiers.reduce((a, b) => a + b, 0);
     let w = rand() * wsum, tier = 0;
     while (tier < B.tiers.length - 1 && w >= B.tiers[tier]) { w -= B.tiers[tier]; tier++; }
-    const pool = OUTFITS.filter((o) => o.tier === tier && o.world !== -1);
+    // Diamond-exclusive outfits never come out of the other boxes; a Diamond Box tries them first
+    let pool = OUTFITS.filter((o) => o.tier === tier && o.world !== -1 && (!o.diamond || B.exclusive));
+    if (B.exclusive && rand() < B.exclusive) {
+      const ex = OUTFITS.filter((o) => o.diamond && !outfitUnlocked(s, o.id));
+      if (ex.length) { tier = ex[0].tier; pool = ex; }
+    }
     const fresh = pool.filter((o) => !outfitUnlocked(s, o.id));
     if (fresh.length) {
       const o = fresh[Math.floor(rand() * fresh.length)];

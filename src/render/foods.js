@@ -20,7 +20,7 @@ function add(g, geo, m, o = {}) {
   return mesh;
 }
 /** small noise jitter on a colour */
-const jit = (C, p, f = 40, k = 0.18) => shadeC(C, (fbm(p[0] * f + 3.1, p[1] * f, p[2] * f) - 0.5) * k * 2);
+const jit = (C, p, f = 40, k = 0.18) => shadeC(C, (fbm(p[0] * f * 0.6 + 3.1, p[1] * f * 0.6, p[2] * f * 0.6) - 0.5) * k);
 /** place geometry copies (transforms) and merge them into one */
 function scatter(base, mats) { return mergeGeometries(mats.map((m) => base.clone().applyMatrix4(m))); }
 const basis = (pos, normal, spin = 0, scl = 1) => {

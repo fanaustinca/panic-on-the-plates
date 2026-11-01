@@ -12,6 +12,7 @@ import { Chef } from './render/chef.js';
 import { makeItem, itemKey } from './render/items.js';
 import { sfx, playMusic, setIntensity } from './audio.js';
 import { tileAt } from './levels.js';
+import { keyNames } from './input.js';
 
 const SNAP_HZ = 20;
 // what falling off the kitchen sounds like in each world: [popup, sound]
@@ -42,7 +43,10 @@ export class Game {
     this.world = WORLDS[wi];
     this.sim = new Sim(this.L, this.roster, this.seed);
     this.me = this.sim.player(this.selfId);
-    this.sim.players.forEach((p) => { p.local = this.isHost && p.id === this.selfId; });
+    // cooks driven from this machine: you, plus any couch co-op cooks (keyboard halves, gamepads)
+    this.locals = (opts.locals || [{ id: this.selfId, ctrl: 'any' }]).filter((l) => this.sim.player(l.id));
+    const localIds = new Set(this.locals.map((l) => l.id));
+    this.sim.players.forEach((p) => { p.local = this.isHost && localIds.has(p.id); });
     this.clock = 0;
     this.sendAcc = 0;
     this.snapT = null;
@@ -145,10 +149,10 @@ export class Game {
         if (m.lf !== p.life || p.ko > 0) return;
         Object.assign(p, { x: m.x, y: m.y, z: m.z, fx: m.fx, fy: m.fy, vx: m.vx, vy: m.vy, falling: !!m.fa });
         p.netAt = performance.now();
-      } else if (m.k === 'press' || m.k === 'work') {
+      } else if (m.k === 'press' || m.k === 'work' || m.k === 'throw') {
         // actions carry the guest's own position, so a press right after arriving isn't judged on a stale one
         if (m.at && m.at.lf === p.life && p.ko <= 0) Object.assign(p, { x: m.at.x, y: m.at.y, fx: m.at.fx, fy: m.at.fy });
-        if (m.k === 'press') this.sim.press(from, m.tg); else this.sim.setWork(from, m.on, m.tg);
+        if (m.k === 'press') this.sim.press(from, m.tg); else if (m.k === 'throw') this.sim.throwItem(from); else this.sim.setWork(from, m.on, m.tg);
       }
     } else {
       if (m.k === 'snap') { this.sim.applySnapshot(m.s, this.selfId); this.snapT = { t: m.s.t, at: performance.now() }; }
@@ -169,28 +173,35 @@ export class Game {
     const inp = this.input;
     const t = this.isHost ? sim.t : this.clientT();
     const playing = sim.phase === 'play';
-    const canAct = playing && me && me.ko <= 0 && !this.paused;
 
-    // local input
-    const mv = canAct ? inp.move() : { mx: 0, my: 0 };
-    const jump = canAct && inp.consumeJump();
-    if (canAct && jump && me.z <= 0.001 && !me.falling) sfx.jump();
-    if (me) {
-      me.target = me.ko > 0 ? null : findTarget(this.L, me, Math.max(0, t));
-      if (canAct) {
-        if (inp.consumePress()) {
-          if (this.isHost) { this.sim.press(this.selfId, me.target); this.sim.setWork(this.selfId, true, me.target); }
-          else { const at = { x: +me.x.toFixed(3), y: +me.y.toFixed(3), fx: +me.fx.toFixed(3), fy: +me.fy.toFixed(3), lf: me.life }; this.room.toHost({ k: 'press', tg: me.target, at }); this.room.toHost({ k: 'work', on: true, tg: me.target, at }); }
-        }
-        if (inp.consumeRelease()) {
-          if (this.isHost) this.sim.setWork(this.selfId, false);
-          else this.room.toHost({ k: 'work', on: false });
-        }
-      } else { inp.consumePress(); inp.consumeRelease(); }
+    // local input: every cook on this machine reads its own controller
+    const canAct0 = playing && !this.paused;
+    for (const lc of this.locals) {
+      const p = sim.player(lc.id);
+      if (!p) continue;
+      const c = inp.read(lc.ctrl);
+      const canAct = canAct0 && p.ko <= 0;
+      p.target = p.ko > 0 ? null : findTarget(this.L, p, Math.max(0, t));
+      lc.inp = canAct ? { mx: c.mx, my: c.my, jump: c.jump, dash: c.dash } : { mx: 0, my: 0, jump: false, dash: false };
+      if (!canAct) { if (c.release && this.isHost) sim.setWork(p.id, false); continue; }
+      if (c.jump && p.z <= 0.001 && !p.falling) sfx.jump();
+      const at = () => ({ x: +p.x.toFixed(3), y: +p.y.toFixed(3), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3), lf: p.life });
+      if (c.press) {
+        if (this.isHost) { sim.press(p.id, p.target); sim.setWork(p.id, true, p.target); }
+        else { const a = at(); this.room.toHost({ k: 'press', tg: p.target, at: a }); this.room.toHost({ k: 'work', on: true, tg: p.target, at: a }); }
+      }
+      if (c.release) {
+        if (this.isHost) sim.setWork(p.id, false); else this.room.toHost({ k: 'work', on: false });
+      }
+      if (c.throw && p.held && p.held.kind === 'ing') {
+        if (this.isHost) sim.throwItem(p.id); else this.room.toHost({ k: 'throw', at: at() });
+      }
     }
+    const mv = (this.locals.find((l) => l.id === this.selfId) || {}).inp || { mx: 0, my: 0, jump: false, dash: false };
+    const jump = mv.jump;
 
     if (this.isHost) {
-      if (me) me.inp = { mx: mv.mx, my: mv.my, jump };
+      for (const lc of this.locals) { const p = sim.player(lc.id); if (p && lc.inp) p.inp = lc.inp; }
       if (!this.paused || this.room) sim.step(dt);
       this.sendAcc += dt;
       if (this.room && this.sendAcc >= 1 / SNAP_HZ) { this.sendAcc = 0; this.room.broadcast({ k: 'snap', s: sim.snapshot() }); }
@@ -201,7 +212,7 @@ export class Game {
       }
     } else if (me) {
       if (me.ko <= 0 && sim.phase === 'play') {
-        movePlayer(this.L, me, { mx: mv.mx, my: mv.my, jump }, dt, t);
+        movePlayer(this.L, me, { mx: mv.mx, my: mv.my, jump, dash: mv.dash }, dt, t);
         this.sendAcc += dt;
         if (this.sendAcc >= 1 / NET_HZ) {
           this.sendAcc = 0;
@@ -234,7 +245,7 @@ export class Game {
     this.ended = true;
     const sim = this.sim;
     const res = {
-      level: this.level, score: sim.score, delivered: sim.delivered, failed: sim.failed, tips: sim.tips,
+      level: this.level, score: sim.score, delivered: sim.delivered, failed: sim.failed, tips: sim.tips, golds: sim.golds || 0,
       stars: starsFor(this.L, sim.score, sim.players.length), thresholds: sim.stars,
       players: sim.players.map((p) => ({ id: p.id, name: p.name, slot: p.slot, outfit: p.outfit, color: p.color, skin: p.skin, stats: p.stats })),
     };
@@ -273,7 +284,9 @@ export class Game {
       let da = ang - c.root.rotation.y;
       da = Math.atan2(Math.sin(da), Math.cos(da));
       c.root.rotation.y += da * Math.min(1, dt * 18);
-      c.animate({ speed: Math.hypot(vx, vy), z: c.disp.z, act: p.act, holding: !!p.held, dt, t: rt });
+      if ((p.dn || 0) !== (c.dn ?? p.dn)) { this.kitchen.dashPuff(c.root.position, fx, fy); if (this.locals.some((lc) => lc.id === p.id)) sfx.dash(); }
+      c.dn = p.dn || 0;
+      c.animate({ speed: Math.hypot(vx, vy), z: c.disp.z, act: p.act, holding: !!p.held, shock: p.falling || p.ko > 0, dt, t: rt });
       c.blob.visible = c.disp.z > 0.05 && !p.falling;
       c.blob.position.y = -c.disp.z + 0.015;
       c.ring.position.y = -c.disp.z + 0.015;
@@ -288,7 +301,7 @@ export class Game {
       }
     }
     // own target highlight
-    this.kitchen.setHighlight(this.me && this.me.ko <= 0 && sim.phase === 'play' ? this.me.target : null);
+    this.kitchen.setHighlights(sim.phase !== 'play' ? [] : this.locals.map((lc) => { const p = sim.player(lc.id); return p && p.ko <= 0 ? { target: p.target, color: this.locals.length > 1 ? SLOT_COLORS[p.slot % 4] : 0xffffff } : null; }).filter(Boolean));
     // camera shake
     this.shake = Math.max(0, this.shake - dt * 2.5);
     this.camera.position.copy(this.camBase);
@@ -327,12 +340,18 @@ export class Game {
       case 'extinguished': sfx.extinguished(); break;
       case 'deliver':
         sfx.deliver();
-        hud.popup(at(e.x, e.y, 1.6), `+${e.points}${e.tip ? ` <small>+${e.tip} tip${e.combo > 1 ? ` x${e.combo}` : ''}</small>` : ''}`, 'good');
+        if (e.gold) sfx.gold();
+        hud.popup(at(e.x, e.y, 1.6), `${e.gold ? '<b class="goldtxt">GOLDEN!</b> ' : ''}+${e.points}${e.tip ? ` <small>+${e.tip} tip${e.combo > 1 ? ` x${e.combo}` : ''}${e.rush ? ' rush x2' : ''}</small>` : ''}`, e.gold ? 'gold' : 'good');
         hud.orderDone(e.oid);
         break;
       case 'wrong': sfx.wrong(); hud.popup(at(e.x, e.y), e.msg, 'bad'); break;
-      case 'blocked': if (this.me && this.me.target && this.me.target[0] === e.x && this.me.target[1] === e.y) { sfx.wrong(); hud.popup(at(e.x, e.y), e.msg, 'warn'); } break;
-      case 'order': sfx.order(); break;
+      case 'blocked': if (this.locals.some((lc) => { const p = this.sim.player(lc.id); return p && p.target && p.target[0] === e.x && p.target[1] === e.y; })) { sfx.wrong(); hud.popup(at(e.x, e.y), e.msg, 'warn'); } break;
+      case 'throw': sfx.throw(); break;
+      case 'catch': sfx.catch(); hud.popup(at(e.x, e.y, 1.7), 'Nice catch!', 'good'); break;
+      case 'landed': sfx.drop(); break;
+      case 'splat': sfx.splat(); if (!e.lost) hud.popup(at(e.x, e.y, 1.1), 'Splat!', 'muted'); break;
+      case 'rush': if (e.on) { sfx.rush(); hud.alert('RUSH HOUR! Orders pour in, tips are doubled', 'rush'); } break;
+      case 'order': sfx.order(); if (e.gold) { sfx.gold(); hud.alert('A food critic! Golden order: double points', 'gold'); } break;
       case 'expire': sfx.expire(); hud.orderFailed(e.oid); break;
       case 'washed': sfx.washed(); break;
       case 'dirty': break;
@@ -358,20 +377,21 @@ export class Game {
   /** HUD hint for what Enter would do right now. */
   hint() {
     const p = this.me, sim = this.sim;
+    const KA = keyNames((this.locals[0] || {}).ctrl).act, KT = keyNames((this.locals[0] || {}).ctrl).throw;
     if (!p || p.ko > 0) return p && p.ko > 0 ? `Respawning in ${Math.ceil(p.ko)}…` : '';
     const H = p.held;
-    if (H && H.kind === 'ext') return 'Hold <kbd>Enter</kbd> to spray';
-    if (!p.target) return H ? `Carrying ${describe(H)}` : '';
-    const verb0 = (v) => `<kbd>Enter</kbd> ${v}`;
+    if (H && H.kind === 'ext') return `Hold <kbd>${KA}</kbd> to spray`;
+    if (!p.target) return H ? `Carrying ${describe(H)}${H.kind === 'ing' ? ` · <kbd>${KT}</kbd> throw` : ''}` : '';
+    const verb0 = (v) => `<kbd>${KA}</kbd> ${v}`;
     if (p.target[2] != null) { const I = sim.mv[p.target[2]] && sim.mv[p.target[2]].item; return H ? verb0(I ? 'Combine' : 'Put down') : I ? verb0('Pick up') : ''; }
     const tl = tileAt(this.L, p.target[0], p.target[1]), s = sim.st(p.target[0], p.target[1]);
     if (s.fire) return 'On fire! Use the extinguisher';
     const I = s.item;
-    const verb = (v) => `<kbd>Enter</kbd> ${v}`;
+    const verb = (v) => `<kbd>${KA}</kbd> ${v}`;
     switch (tl.st) {
       case 'bin': return H ? '' : verb(`Grab ${INGREDIENTS[tl.ing].name}`);
-      case 'board': if (!H && I && I.kind === 'ing' && I.s === 'raw') return 'Hold <kbd>Enter</kbd> to chop'; break;
-      case 'sink': if (!H && s.dirty) return 'Hold <kbd>Enter</kbd> to wash'; if (!H && s.clean) return verb('Take clean plate'); if (H && H.kind === 'plate' && H.dirty) return verb('Drop plates in sink'); break;
+      case 'board': if (!H && I && I.kind === 'ing' && I.s === 'raw') return `Hold <kbd>${KA}</kbd> to chop`; break;
+      case 'sink': if (!H && s.dirty) return `Hold <kbd>${KA}</kbd> to wash`; if (!H && s.clean) return verb('Take clean plate'); if (H && H.kind === 'plate' && H.dirty) return verb('Drop plates in sink'); break;
       case 'return': if (!H && s.dirty) return verb('Collect dirty plates'); break;
       case 'trash': if (H) return verb('Bin it'); break;
       case 'window': if (H && H.kind === 'plate' && H.c.length) return verb('Serve!'); break;

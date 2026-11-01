@@ -2,11 +2,13 @@
 //   ?w=0..7            one world: its 4 ingredients (rows) x raw / chopped / cooked / burnt (columns)
 //   ?ing=id&chop=1      the chop sequence of one ingredient at several progress values
 //   ?plates=w           plates, a few dishes and the extinguisher
+//   ?chefs=0..3         cooks: a page of outfits (each with a different skin colour); &pose=chop|run|air
 //   &zoom=1.5           closer camera
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { WORLDS, worldRecipes, finalState } from '../../src/config.js';
 import * as Items from '../../src/render/items.js';
+import { Chef, OUTFIT_IDS } from '../../src/render/chef.js';
 const { makeIngredient, makePlate, makeExtinguisher } = Items;
 
 const q = new URLSearchParams(location.search);
@@ -51,6 +53,17 @@ if (q.has('w')) {
   cells.push([makePlate({ n: 3 }), 2, 1, 'clean x3']); cells.push([makePlate({ n: 2, dirty: true }), 3, 1, 'dirty']);
   cells.push([makeExtinguisher(), 3, 0, 'ext']);
 }
+const chefs = [];
+if (q.has('chefs')) {
+  cols = 4; rows = 2;
+  const page = +q.get('chefs');
+  OUTFIT_IDS.slice(page * 8, page * 8 + 8).forEach((id, i) => {
+    const c = new Chef({ outfit: id, color: [0xe8553a, 0x3a8ae8, 0x4ab84a, 0xf2b52a, 0xa05ad8, 0x2ac0b8, 0xf27ab0, 0x5a5a6a][i], skin: (page * 8 + i) % 16 });
+    c.root.scale.setScalar(0.5); c.root.add(c.blob);
+    chefs.push(c);
+    cells.push([c.root, i % 4, Math.floor(i / 4), id]);
+  });
+}
 if (q.has('plain')) for (const [o] of cells) o.traverse((m) => { if (m.isMesh && !Array.isArray(m.material)) m.material = new THREE.MeshStandardMaterial({ vertexColors: !!m.geometry.attributes.color, color: m.material.color, roughness: 0.5 }); });
 if (q.has('tweak')) { const [k, v] = q.get('tweak').split(':'); for (const [o] of cells) o.traverse((m) => { if (m.isMesh) for (const mt of [m.material].flat()) { mt[k] = +v; mt.needsUpdate = true; } }); }
 const sp = 0.62;
@@ -58,10 +71,18 @@ for (const [o, c, r] of cells) { o.position.set((c - (cols - 1) / 2) * sp, 0, (r
 const cam = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.05, 50);
 const span = Math.max(cols, rows * 1.6) * sp;
 cam.position.set(0, span * 1.05 / zoom, span * 0.95 / zoom); cam.lookAt(0, 0, 0.05);
+if (chefs.length) {
+  // front view, two shelves of cooks
+  for (const [o, c, r] of cells) { o.position.set((c - 1.5) * 0.62, (1 - r) * 0.72, 0); o.rotation.y = 0.3; }
+  floor.visible = false;
+  cam.position.set(0, 0.62, 3.0 / zoom); cam.lookAt(0, 0.6, 0);
+}
 let t = 0;
 function frame() {
   t += 1 / 60;
   for (const [rig, k] of rigs) rig.update(k, 1 / 60);
+  const pose = q.get('pose');
+  for (const c of chefs) c.animate({ speed: pose === 'run' ? 4.4 : 0, z: pose === 'air' ? 0.3 : 0, act: pose === 'chop' ? 'chop' : null, holding: pose === 'hold', shock: pose === 'air', dt: 1 / 60, t });
   R.render(scene, cam);
   if (!label.childNodes.length) for (const [o, , , txt] of cells) { const v = o.position.clone().project(cam); tag(txt, (v.x + 1) / 2 * innerWidth - 40, (1 - v.y) / 2 * innerHeight + 30); }
   requestAnimationFrame(frame);

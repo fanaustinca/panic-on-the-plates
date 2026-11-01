@@ -1,8 +1,8 @@
 // Developer console: press ` (backquote) to open, type `help`. Also in the browser's F12 console:
 // dev.help() lists every command, and each one is a function there too, e.g. dev.coins(500), dev.play('3-4').
-import { OUTFITS, BOXES, UPGRADES, UPGRADE_MAX, WORLDS, cleanUpg } from './config.js';
+import { OUTFITS, BOXES, UPGRADES, UPGRADE_MAX, WORLDS, INGREDIENTS, cleanUpg } from './config.js';
 import { writeSave, openBox } from './save.js';
-import { starThresholds } from './sim.js';
+import { starThresholds, rushStart } from './sim.js';
 import { MP_LEVEL } from './levels.js';
 import { initAudio, playMusic, songList } from './audio.js';
 
@@ -10,7 +10,7 @@ const HELP = `commands:
   coins <n>              add n coins (negative takes them away)
   give <outfit|all>      unlock an outfit (or every outfit)
   outfits                list outfit ids
-  box <bronze|silver|gold> [n]   open n gift boxes for free
+  box <bronze|silver|gold|diamond> [n]   open n gift boxes for free
   upg <id|all> <0-5>     set an upgrade tier (ids: ${UPGRADES.map((g) => g.id).join(', ')})
   stars <w-l|all> <0-3>  set stars on a level (w, l from 1), e.g. stars 3-4 2
   unlock                 open every level (marks them all skipped)
@@ -18,6 +18,10 @@ const HELP = `commands:
   win [stars]            end the current round now with that many stars (default 3)
   time <s>               set the seconds left in the current round
   speed <x>              game speed multiplier (1 = normal)
+  gold                   a golden (food critic) order right now
+  rush                   jump the clock to rush hour
+  couch <kb2|pad0..3|off>  add a couch co-op cook on the arrow keys or a gamepad (off removes them all)
+  give food <ing>        put an ingredient in your hands (for throwing practice); food lists the ids
   music <world> [1|2] [final]   preview a song (worlds: lobby, ${WORLDS.map((w) => w.id).join(', ')}); music list
   fps                    toggle an fps counter
   reset yes              wipe the save
@@ -47,7 +51,13 @@ export function installDev(app) {
     },
     coins: (n) => { s().coins = Math.max(0, (s().coins | 0) + (parseInt(n, 10) || 0)); save(); out(`coins: ${s().coins}`); },
     outfits: () => out(OUTFITS.map((o) => `${o.id} (${['common', 'rare', 'epic', 'legendary', 'chroma'][o.tier]})`).join('\n')),
-    give: (id) => {
+    give: (id, what) => {
+      if (id === 'food') {
+        const g = app.game, p = g && g.sim.player(app.selfId);
+        if (!p || !g.isHost) throw new Error('start a round first');
+        if (!what || !INGREDIENTS[what]) return out('food ids: ' + Object.keys(INGREDIENTS).join(', '));
+        p.held = { kind: 'ing', ing: what, s: 'raw', p: 0 }; out(`holding ${INGREDIENTS[what].name}`); return;
+      }
       const ids = id === 'all' ? OUTFITS.map((o) => o.id) : [id];
       for (const q of ids) { if (!OUTFITS.some((o) => o.id === q)) throw new Error(`no outfit "${q}" (try: outfits)`); if (!s().owned.includes(q)) s().owned.push(q); }
       save(); out(`unlocked ${ids.length} outfit${ids.length > 1 ? 's' : ''}`);
@@ -85,6 +95,14 @@ export function installDev(app) {
       g.sim.t = g.L.duration; out(`ending the round with ${k} star${k === 1 ? '' : 's'}`);
     },
     time: (sec) => { const g = app.game; if (!g || !g.isHost) throw new Error('no round running here'); g.sim.t = Math.max(0, g.L.duration - (+sec || 0)); out(`${sec}s left`); },
+    gold: () => { const g = app.game; if (!g || !g.isHost) throw new Error('no round running here'); const o = g.sim.spawnOrder(); o.gold = 1; out(`golden order: ${g.L.recipes[o.r].name}`); },
+    rush: () => { const g = app.game; if (!g || !g.isHost) throw new Error('no round running here'); const at = rushStart(g.L); if (!Number.isFinite(at)) throw new Error('this level has no rush hour'); g.sim.t = at; out('rush hour!'); },
+    couch: (c = 'kb2') => {
+      if (c === 'off') { [...app.couch].forEach((q) => app.removeLocal(q.id)); return out('couch cooks removed'); }
+      if (!/^(kb2|pad[0-3])$/.test(c)) throw new Error('couch kb2 | pad0..pad3 | off');
+      if (app.mode !== 'lobby') { if (app.game) throw new Error('add couch cooks in the lobby'); app.solo(); }
+      out(app.addLocal(c) ? `added a cook on ${c}` : 'could not add (already there, or the kitchen is full)');
+    },
     speed: (x) => { app.devSpeed = Math.max(0.1, Math.min(8, +x || 1)); out(`speed x${app.devSpeed}`); },
     fps: () => {
       if (fpsEl) { fpsEl.remove(); fpsEl = null; return; }
@@ -137,7 +155,7 @@ export function installDev(app) {
       const args = (m[2].match(/[<\[][^>\]]+[>\]]/g) || []).map((a) => (a.startsWith('[') ? a.slice(1, -1) + '?' : a.slice(1, -1)));
       return `  dev.${m[1]}(${args.join(', ')})`.padEnd(46) + m[3];
     });
-    console.log(`%cPanic on the Plates dev commands%c\n${lines.join('\n')}\n\nExamples: dev.coins(500)  dev.give('all')  dev.box('gold', 5)  dev.play('3-4')  dev.win(3)  dev.music('pirate', 2, 'final')\nThe same commands work in the in-game console (press \` and type them without dev. or brackets).`, 'font-weight:bold;font-size:13px;color:#ffb21a', '');
+    console.log(`%cPanic on the Plates dev commands%c\n${lines.join('\n')}\n\nExamples: dev.coins(500)  dev.give('all')  dev.box('gold', 5)  dev.play('3-4')  dev.win(3)  dev.music('pirate', 2, 'final')  dev.box('diamond')  dev.couch('kb2')  dev.gold()  dev.rush()\nThe same commands work in the in-game console (press \` and type them without dev. or brackets).`, 'font-weight:bold;font-size:13px;color:#ffb21a', '');
   };
   return api;
 }

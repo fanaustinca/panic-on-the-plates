@@ -1039,6 +1039,17 @@ export class Kitchen {
       case 'dirty':
         if (parts && parts.strips) parts.flap = 1;
         break;
+      case 'splat': {
+        // juice in the colour of the food, where it came down
+        const I = INGREDIENTS[e.ing], sx = this.wx(e.fx ?? e.x + 0.5), sz = this.wz(e.fy ?? e.y + 0.5);
+        const y0 = tl && tl.k === 'counter' ? top + 0.05 : 0.06;
+        if (e.lost) break;
+        for (let k = 0; k < 14; k++) { const a = Math.random() * Math.PI * 2, v = 0.8 + Math.random() * 1.6; P.chunk({ x: sx, y: y0 + 0.05, z: sz, vx: Math.cos(a) * v, vy: 1 + Math.random() * 1.8, vz: Math.sin(a) * v, color: k % 2 ? I.c2 : I.c1, s: 0.03 + Math.random() * 0.02, life: 0.9, floor: y0 }); }
+        break;
+      }
+      case 'catch':
+        for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2; P.puff({ x: x + Math.cos(a) * 0.2, y: 1.2, z: z + Math.sin(a) * 0.2, vx: Math.cos(a) * 1.2, vy: 0.5, vz: Math.sin(a) * 1.2, drag: 2, life: 0.5, s0: 0.06, s1: 0.02, a: 1, color: 0xfff2a0, glow: true }); }
+        break;
       case 'fire':
         for (let k = 0; k < 16; k++) P.puff({ x, y: top + 0.2, z, vx: (Math.random() - 0.5) * 2, vy: 2 + Math.random() * 2, vz: (Math.random() - 0.5) * 2, g: 3, life: 0.9, s0: 0.07, s1: 0.02, a: 1, color: 0xffa030, glow: true });
         break;
@@ -1333,6 +1344,56 @@ export class Kitchen {
       g.children[0].position.y = 0.32 + Math.abs(Math.sin(rt * 12)) * 0.05;
     });
     for (let i = sim.monkeys.length; i < this.monkeyPool.length; i++) this.monkeyPool[i].visible = false;
+    // thrown food: tumbles along its arc, with a shadow on the ground below
+    this.flyMeshes = this.flyMeshes || new Map();
+    const live = new Set();
+    for (const f of sim.flying || []) {
+      live.add(f.id);
+      let e = this.flyMeshes.get(f.id);
+      if (!e) {
+        const g = new THREE.Group(), it = makeItem(f.item);
+        g.add(it);
+        const sh = new THREE.Mesh(new THREE.CircleGeometry(0.18, 16), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25, depthWrite: false }));
+        sh.rotation.x = -Math.PI / 2;
+        this.dyn.add(g, sh);
+        e = { g, it, sh, x: f.x, y: f.y, z: f.z, spin: Math.random() * 6 };
+        this.flyMeshes.set(f.id, e);
+      }
+      // snapshots arrive at 20 Hz: glide towards the reported point along the known velocity
+      const k = 1 - Math.exp(-dt * 18);
+      e.x += (f.x - e.x) * k; e.y += (f.y - e.y) * k; e.z += (f.z - e.z) * k;
+      e.spin += dt * 9;
+      e.g.position.set(this.wx(e.x), Math.max(0.05, e.z), this.wz(e.y));
+      e.it.rotation.set(e.spin, e.spin * 0.7, 0);
+      const tl = tileAt(this.L, Math.floor(e.x), Math.floor(e.y));
+      const gy = tl && tl.k === 'counter' ? CH + 0.01 : tl && tl.k !== 'void' ? 0.02 : -50;
+      e.sh.position.set(this.wx(e.x), gy, this.wz(e.y));
+      e.sh.visible = gy > -1;
+      e.sh.scale.setScalar(Math.max(0.4, 1.2 - (e.z - gy) * 0.4));
+    }
+    for (const [id, e] of this.flyMeshes) if (!live.has(id)) { this.dyn.remove(e.g, e.sh); this.flyMeshes.delete(id); }
+  }
+
+  /** a puff of dust behind a dashing cook (pos in root space) */
+  dashPuff(pos, fx, fy) {
+    const P = this.parts;
+    for (let k = 0; k < 9; k++) {
+      const s = (Math.random() - 0.5) * 0.4;
+      P.puff({ x: pos.x - fx * 0.3 + fy * s, y: pos.y + 0.08, z: pos.z - fy * 0.3 - fx * s, vx: -fx * (1 + Math.random() * 1.5), vy: 0.3 + Math.random() * 0.4, vz: -fy * (1 + Math.random() * 1.5), drag: 2.5, life: 0.45, s0: 0.1, s1: 0.28, a: 0.45, color: 0xf4efe6 });
+    }
+  }
+
+  /** one highlight per cook on this machine: [{ target, color }] */
+  setHighlights(list) {
+    this.hls = this.hls || [this.highlight];
+    while (this.hls.length < list.length) { const h = this.highlight.clone(); h.material = this.highlight.material.clone(); h.visible = false; this.root.add(h); this.hls.push(h); }
+    this.hls.forEach((h, i) => {
+      const it = list[i];
+      this.highlight = h;
+      this.setHighlight(it ? it.target : null);
+      if (it) { h.material.color.setHex(it.color); h.material.opacity = it.color === 0xffffff ? 0.35 : 0.5; }
+    });
+    this.highlight = this.hls[0];
   }
 
   setHighlight(target) {

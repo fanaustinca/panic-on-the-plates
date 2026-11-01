@@ -1,12 +1,12 @@
 // App controller: renderer + main loop, menus, lobby membership/voting over the Room, and matches.
 import * as THREE from 'three';
 import './style.css';
-import { WORLDS, MAX_PLAYERS, OUTFITS, cleanUpg, finalState } from './config.js';
+import { WORLDS, MAX_PLAYERS, OUTFITS, COLORS, SKINS, cleanUpg, finalState } from './config.js';
 import { MP_LEVEL } from './levels.js';
 import { Room, isLocalNet } from './net.js';
 import { Game } from './game.js';
 import { UI } from './ui.js';
-import { Input } from './input.js';
+import { Input, ctrlLabel } from './input.js';
 import { LobbyScene } from './render/lobby3d.js';
 import { installDev } from './dev.js';
 import { loadSave, writeSave, recordResult, levelUnlocked, outfitUnlocked, openBox, skipLevel } from './save.js';
@@ -26,6 +26,9 @@ class App {
     this.ui = new UI(this);
     this.input = new Input();
     this.input.onPause = () => this.togglePause();
+    this.couch = [];
+    this.input.onPadJoin = (i) => { if (this.mode === 'lobby' && !this.room) this.addLocal('pad' + i); };
+    addEventListener('gamepadconnected', () => { this.ui.toast('Gamepad connected: press Y in the lobby to add a cook'); if (this.mode === 'lobby') this.ui.renderLobby(); });
     this.lobby3d = new LobbyScene(this.renderer);
     this.mode = 'title';
     this.room = null;
@@ -66,9 +69,52 @@ class App {
 
   frame(dt, hidden = false) {
     this.rt += dt;
+    this.input.pollPads();
     if (this.game) this.game.update(dt * (this.devSpeed || 1), this.rt, hidden);
-    else if (hidden) return;
-    else this.lobby3d.render(dt, this.rt);
+    else if (!hidden) this.lobby3d.render(dt, this.rt);
+    this.input.endFrame();
+  }
+
+  // ------------------------------------------------------------ couch co-op (more cooks on this machine)
+  /** controller for your own cook: the whole keyboard, or its left half once someone takes the arrows; plus any free gamepad */
+  selfCtrl() { return this.couch.some((c) => c.local === 'kb2') ? 'kb1|free' : 'kb|free'; }
+  addLocal(ctrl) {
+    if (this.room || this.mode !== 'lobby') { this.ui.toast('Couch co-op is for solo kitchens: leave the room first'); return false; }
+    if (this.members.size >= MAX_PLAYERS) { this.ui.toast('The kitchen is full (4 cooks)'); return false; }
+    if (this.couch.some((c) => c.local === ctrl)) return false;
+    const n = this.couch.length + 2;
+    const used = new Set([...this.members.values()].map((m) => m.outfit));
+    const owned = OUTFITS.filter((o) => outfitUnlocked(this.save, o.id));
+    const outfit = (owned.find((o) => !used.has(o.id)) || owned[0]).id;
+    const usedC = new Set([...this.members.values()].map((m) => m.color));
+    const color = [1, 2, 3, 4, 5, 6, 7, 0].find((c) => !usedC.has(c)) ?? n;
+    const g = { id: `local${n}-${Date.now() % 1e5}`, name: `Player ${n}`, outfit, color, skin: (this.save.skin + n * 3) % SKINS.length, upg: cleanUpg(this.save.upg), host: false, ready: true, vote: null, joined: n, local: ctrl };
+    this.couch.push(g);
+    this.members.set(g.id, g);
+    if (ctrl.startsWith('pad')) this.input.claimed.add(+ctrl.slice(3));
+    sfx.order();
+    this.ui.toast(`${g.name} joined on ${ctrlLabel(ctrl)}`);
+    this.lobbyChanged();
+    return true;
+  }
+  removeLocal(id) {
+    const g = this.couch.find((c) => c.id === id);
+    if (!g) return;
+    this.couch = this.couch.filter((c) => c !== g);
+    this.members.delete(id);
+    if (g.local.startsWith('pad')) this.input.claimed.delete(+g.local.slice(3));
+    // renumber the rest
+    this.couch.forEach((c, i) => { c.name = c.name.replace(/^Player \d$/, `Player ${i + 2}`); c.joined = i + 2; });
+    this.lobbyChanged();
+  }
+  /** cycle a couch cook's look: 'outfit' | 'color' | 'skin' */
+  cycleLocal(id, what) {
+    const g = this.couch.find((c) => c.id === id);
+    if (!g) return;
+    if (what === 'outfit') { const owned = OUTFITS.filter((o) => outfitUnlocked(this.save, o.id)); g.outfit = owned[(owned.findIndex((o) => o.id === g.outfit) + 1) % owned.length].id; }
+    if (what === 'color') g.color = (g.color + 1) % COLORS.length;
+    if (what === 'skin') g.skin = (g.skin + 1) % SKINS.length;
+    this.lobbyChanged();
   }
 
   resize() {
@@ -168,7 +214,7 @@ class App {
     this.members.clear();
     this.lobby3d.shift = innerWidth > 860 ? 0.17 : 0; this.lobby3d.fit();
     this.lobby3d.setTheme(0);
-    this.lobby3d.setPlayers(OUTFITS.slice(0, 4).map((o, i) => ({ id: 'demo' + i, outfit: ['chef', 'pirate', 'spacesuit', 'wizard'][i], color: [0, 1, 3, 4][i], skin: i, ready: true })));
+    this.lobby3d.setPlayers(OUTFITS.slice(0, 4).map((o, i) => ({ id: 'demo' + i, outfit: ['chef', 'pirate', 'spacesuit', 'wizard'][i], color: [0, 1, 3, 4][i], skin: [0, 4, 2, 5][i], ready: true })));
     this.ui.showTitle();
     if (this.musicOn) playMusic('lobby', 112);
   }
@@ -185,6 +231,7 @@ class App {
   solo() {
     this.room = null; this.isHost = true; this.selfId = 'me';
     this.members = new Map([['me', { id: 'me', ...this.profile(), host: true, ready: true, vote: null, joined: 0 }]]);
+    for (const g of this.couch) { g.upg = cleanUpg(this.save.upg); this.members.set(g.id, g); }
     this.ui.viewWorld = +this.pickLevel().split('-')[0];
     this.ui.tab = 'level';
     this.enterLobby();
@@ -222,8 +269,10 @@ class App {
   }
 
   browse() { return Room.browse(); }
+  dropCouch() { if (this.couch.length) this.ui.toast('Couch co-op cooks stay home in online rooms'); this.couch = []; this.input.claimed.clear(); }
 
   setupHost(room) {
+    this.dropCouch();
     this.room = room; this.isHost = true; this.selfId = room.selfId;
     this.members = new Map([[this.selfId, { id: this.selfId, ...this.profile(), host: true, ready: true, vote: null, joined: 0 }]]);
     let joinN = 1;
@@ -258,6 +307,7 @@ class App {
   }
 
   setupClient(room) {
+    this.dropCouch();
     this.room = room; this.isHost = false; this.selfId = room.selfId;
     this.members = new Map([[this.selfId, { id: this.selfId, ...this.profile(), host: false, ready: false, vote: null, joined: 99 }]]);
     room.onLeave = () => { if (this.room !== room) return; this.ui.toast('The host closed the kitchen'); this.teardown(); this.showTitle(); };
@@ -299,11 +349,13 @@ class App {
     this.game = new Game({
       renderer: this.renderer, room: this.room, selfId: this.selfId, isHost: this.isHost, roster, level, seed,
       hud: this.ui, input: this.input, quality: this.save.settings.quality,
+      locals: [{ id: this.selfId, ctrl: this.room ? 'kb|free' : this.selfCtrl() }, ...(this.room ? [] : this.couch.filter((c) => roster.some((r) => r.id === c.id)).map((c) => ({ id: c.id, ctrl: c.local })))],
       onEnd: (res) => {
         if (this.isHost) { if (this.room) this.room.broadcast({ k: 'end', res }); this.showResults(res); }
       },
     });
     window.PANIC.game = this.game;
+    if (!this.save.seen11) { this.save.seen11 = true; writeSave(this.save); setTimeout(() => this.ui.toast('New: <b>Shift</b> dashes, <b>Q</b> throws food to a teammate, onto a counter or into its pan. Watch for golden orders!'), 4200); }
   }
 
   showResults(res) {

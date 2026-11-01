@@ -72,6 +72,12 @@ export const sfx = {
   tick() { tone(1800, 0.03, { type: 'square', vol: 0.05 }); },
   count(n) { tone(n ? 660 : 1320, n ? 0.18 : 0.5, { type: 'triangle', vol: 0.25 }); if (!n) tone(990, 0.5, { type: 'triangle', vol: 0.15 }); },
   ui() { tone(700, 0.05, { type: 'triangle', vol: 0.1 }); },
+  dash() { noise(0.18, { vol: 0.16, freq: 900, q: 0.8, sweep: 3 }); tone(240, 0.12, { type: 'triangle', vol: 0.06, slide: 1.8 }); },
+  throw() { noise(0.2, { vol: 0.12, freq: 1200, q: 1.2, sweep: 2.4 }); tone(500, 0.12, { type: 'triangle', vol: 0.08, slide: 1.6 }); },
+  catch() { tone(784, 0.07, { type: 'triangle', vol: 0.16 }); tone(1175, 0.1, { type: 'triangle', vol: 0.14, at: 0.06 }); },
+  splat() { noise(0.22, { vol: 0.3, freq: 500, q: 0.9, sweep: 0.4 }); tone(140, 0.14, { type: 'sine', vol: 0.12, slide: 0.6 }); },
+  gold() { [0, 4, 7, 11, 14].forEach((s, i) => tone(1047 * 2 ** (s / 12), 0.18, { type: 'sine', vol: 0.09, at: i * 0.05 })); },
+  rush() { [0, 0.18, 0.36].forEach((a, i) => { tone(660 + i * 110, 0.14, { type: 'square', vol: 0.09, at: a }); tone(880 + i * 110, 0.14, { type: 'square', vol: 0.07, at: a + 0.07 }); }); },
   star(i) { tone(784 * 2 ** (i * 4 / 12), 0.3, { type: 'triangle', vol: 0.2 }); tone(1568 * 2 ** (i * 4 / 12), 0.4, { vol: 0.08, at: 0.05 }); },
   over() { tone(523, 0.2, { type: 'square', vol: 0.1 }); tone(392, 0.2, { type: 'square', vol: 0.1, at: 0.2 }); tone(262, 0.5, { type: 'square', vol: 0.1, at: 0.4 }); },
 };

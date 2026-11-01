@@ -1,7 +1,7 @@
 // Static game data: worlds, ingredients, recipes, outfits and tuning constants.
 // Everything here is plain data so the node logic tests can import it.
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const MAX_PLAYERS = 4;
 export const NET_HZ = 15;
 
@@ -181,6 +181,10 @@ export const OUTFITS = [
   { id: 'galaxy', name: 'Galaxy Chef', tier: 4, perks: ['chop', 'speed'] },
   { id: 'golden', name: 'Golden Chef', tier: 4, perks: ['cook', 'wash'] },
   { id: 'neon', name: 'Neon Chef', tier: 4, perks: ['speed', 'jump'] },
+  // only ever found in a Diamond Box
+  { id: 'diamond', name: 'Diamond Chef', tier: 4, perks: ['chop', 'cook'], diamond: true },
+  { id: 'aurora', name: 'Aurora Chef', tier: 4, perks: ['wash', 'speed'], diamond: true },
+  { id: 'inferno', name: 'Inferno Chef', tier: 4, perks: ['spray', 'cook'], diamond: true },
 ];
 for (const o of OUTFITS) if (o.world == null) o.world = -2; // -2: from gift boxes
 /** Perk multiplier an outfit gives for a stat (1 = none). */
@@ -199,6 +203,19 @@ export const BOXES = [
   { id: 'bronze', name: 'Bronze Gift', cost: 120, color: '#c8803a', odds: { coins: 0.35, upg: 0.35, skin: 0.3 }, tiers: [70, 25, 5, 0, 0], coins: [40, 100] },
   { id: 'silver', name: 'Silver Gift', cost: 300, color: '#c8d2dc', odds: { coins: 0.2, upg: 0.35, skin: 0.45 }, tiers: [25, 42, 23, 9, 1], coins: [110, 220] },
   { id: 'gold', name: 'Gold Gift', cost: 700, color: '#ffc83a', odds: { coins: 0.1, upg: 0.3, skin: 0.6 }, tiers: [0, 28, 38, 26, 8], coins: [260, 480], upgN: 2 },
+  // the top shelf: almost always an outfit, rarest tiers only, and the only way to get the Diamond-exclusive chefs
+  { id: 'diamond', name: 'Diamond Box', cost: 1800, color: '#7ae8ff', odds: { coins: 0, upg: 0.15, skin: 0.85 }, tiers: [0, 0, 22, 44, 34], coins: [700, 1100], upgN: 3, exclusive: 0.45 },
+];
+// Skin tones: four natural ones, then the fun ones (teal, lavender, lime...). hair: matching hair colour.
+export const SKINS = [
+  { c: 0xf2c8a0, hair: 0x5a3a22, name: 'Peach' }, { c: 0xd9a07a, hair: 0x3a2414, name: 'Honey' },
+  { c: 0xa86e48, hair: 0x22140c, name: 'Cocoa' }, { c: 0x6e4a32, hair: 0x140c08, name: 'Espresso' },
+  { c: 0x3ec8b4, hair: 0x1a5a7a, name: 'Teal' }, { c: 0xb79cf0, hair: 0x4a2a8a, name: 'Lavender' },
+  { c: 0x9ee05a, hair: 0x2a6a1a, name: 'Lime' }, { c: 0x6aa8f0, hair: 0x1a2a6a, name: 'Sky' },
+  { c: 0xff9ec8, hair: 0xd83a7a, name: 'Bubblegum' }, { c: 0xffa65a, hair: 0xa83a1a, name: 'Tangerine' },
+  { c: 0x9ab89a, hair: 0x3a4a3a, name: 'Zombie' }, { c: 0xe8584a, hair: 0x3a0a0a, name: 'Chili' },
+  { c: 0xf2d44a, hair: 0x8a5a0a, name: 'Banana' }, { c: 0x8a6ad8, hair: 0xffd23a, name: 'Grape' },
+  { c: 0xe8eef8, hair: 0x6a8ad8, name: 'Frost' }, { c: 0x4a4a5e, hair: 0xff5ad8, name: 'Midnight' },
 ];
 export const COLORS = [0xe8553a, 0x3a8ae8, 0x4ab84a, 0xf2b52a, 0xa05ad8, 0x2ac0b8, 0xf27ab0, 0x5a5a6a];
 export const SLOT_COLORS = [0xff6a3d, 0x3d9bff, 0x5ad15a, 0xffcf3d];
@@ -210,6 +227,8 @@ export const T = {
   burnAt: { pan: 1.75, pot: 2.0, oven: 1.9 }, fireAt: { pan: 2.4, pot: 2.7, oven: 2.6 },
   fireSpread: 6, fireGrow: 0.25, sprayRate: 1.4,
   dirtyDelay: 9, respawn: 3, plateRespawn: 12,
+  dashMul: 2.4, dashTime: 0.16, dashCd: 0.75,
+  throwV: 6.2, throwVz: 3.4, throwG: 14, catchR: 0.6,
 };
 
 // ---------------------------------------------------------------- character upgrades
