@@ -217,7 +217,8 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   await page.waitForFunction(() => PANIC.app.couch.length === 2, { timeout: 60000 });
   await page.evaluate(() => { window.__pad.buttons[3].pressed = false; });
   assert(await page.evaluate(() => document.querySelectorAll('.pcard.couchc').length === 2), 'two couch cards');
-  await page.evaluate(() => PANIC.app.startMatch('0-2'));
+  // CI renders in software at a few frames a second: skip the countdown and run the clock at 4x
+  await page.evaluate(() => { PANIC.app.startMatch('0-2'); const sim = PANIC.game.sim; while (sim.t < 0.05) sim.step(0.05); PANIC.app.devSpeed = 4; });
   await waitPlay(page);
   const ids = await page.evaluate(() => PANIC.game.locals.map((l) => l.id + ':' + l.ctrl));
   assert(ids.length === 3 && ids[0].endsWith('kb1|free') && ids.some((x) => x.endsWith('kb2')) && ids.some((x) => x.endsWith('pad0')), 'three local cooks: ' + ids);
@@ -246,6 +247,7 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   await page.waitForFunction(() => !PANIC.game.sim.flying.length, { polling: 50, timeout: 90000 });
   assert(!(await page.evaluate(() => PANIC.game.sim.players[0].held)), 'the food left P1');
   await shot(page, 'e2e-couch.png');
+  await page.evaluate(() => { PANIC.app.devSpeed = 1; });
   assert(!errors.length, errors.join('\n'));
   await page.close();
 });
