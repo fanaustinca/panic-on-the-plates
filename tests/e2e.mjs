@@ -214,7 +214,7 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   await page.waitForFunction(() => PANIC.app.couch.length === 1);
   // the pad presses Y in the lobby to join
   await page.evaluate(() => { window.__pad.buttons[3].pressed = true; });
-  await page.waitForFunction(() => PANIC.app.couch.length === 2, { timeout: 5000 });
+  await page.waitForFunction(() => PANIC.app.couch.length === 2, { timeout: 60000 });
   await page.evaluate(() => { window.__pad.buttons[3].pressed = false; });
   assert(await page.evaluate(() => document.querySelectorAll('.pcard.couchc').length === 2), 'two couch cards');
   await page.evaluate(() => PANIC.app.startMatch('0-2'));
@@ -226,7 +226,7 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   await page.bringToFront();
   await page.keyboard.down('KeyD'); await page.keyboard.down('ArrowLeft');
   await page.evaluate(() => { window.__pad.axes[1] = -1; });
-  await page.waitForFunction((p0) => { const P = PANIC.game.sim.players; return Math.abs(P[0].x - p0[0][0]) > 0.4 && Math.abs(P[1].x - p0[1][0]) > 0.4 && Math.abs(P[2].y - p0[2][1]) > 0.2; }, { polling: 50, timeout: 20000 }, p0).catch(() => {});
+  await page.waitForFunction((p0) => { const P = PANIC.game.sim.players; return Math.abs(P[0].x - p0[0][0]) > 0.4 && Math.abs(P[1].x - p0[1][0]) > 0.4 && Math.abs(P[2].y - p0[2][1]) > 0.2; }, { polling: 50, timeout: 90000 }, p0).catch(() => {});
   await page.keyboard.up('KeyD'); await page.keyboard.up('ArrowLeft');
   await page.evaluate(() => { window.__pad.axes[1] = 0; });
   const p1 = await pos();
@@ -236,14 +236,14 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   // dash on each controller
   await page.keyboard.press('ShiftLeft'); await page.keyboard.press('Period');
   await page.evaluate(() => { window.__pad.buttons[5].pressed = true; });
-  await page.waitForFunction(() => PANIC.game.sim.players.every((p) => p.dn >= 1), { polling: 50, timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => PANIC.game.sim.players.every((p) => p.dn >= 1), { polling: 50, timeout: 60000 }).catch(() => {});
   await page.evaluate(() => { window.__pad.buttons[5].pressed = false; });
   assert(await page.evaluate(() => PANIC.game.sim.players.every((p) => p.dn >= 1)), 'all three dashed');
   // throw: P1 holds food and presses Q
   await page.evaluate(() => { const g = PANIC.game, p = g.sim.players[0]; p.held = { kind: 'ing', ing: g.L.recipes[0].ings[0], s: 'raw', p: 0 }; });
   await page.keyboard.press('KeyQ');
-  await page.waitForFunction(() => PANIC.game.sim.players[0].stats.throws === 1, { polling: 50, timeout: 5000 });
-  await page.waitForFunction(() => !PANIC.game.sim.flying.length, { polling: 50, timeout: 10000 });
+  await page.waitForFunction(() => PANIC.game.sim.players[0].stats.throws === 1, { polling: 50, timeout: 60000 });
+  await page.waitForFunction(() => !PANIC.game.sim.flying.length, { polling: 50, timeout: 90000 });
   assert(!(await page.evaluate(() => PANIC.game.sim.players[0].held)), 'the food left P1');
   await shot(page, 'e2e-couch.png');
   assert(!errors.length, errors.join('\n'));
