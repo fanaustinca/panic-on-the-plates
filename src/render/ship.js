@@ -3,6 +3,7 @@
 // billowing canvas, jibs to the bowsprit, rigging, a stern castle, lanterns and the Jolly Roger.
 // Everything here rides on the kitchen root, so it rolls with the deck.
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { mat, part, sph, cyl, box, cone, tor } from './items.js';
 
 const DECK_Y = -0.01;
@@ -10,7 +11,7 @@ export const WATERLINE = -1.75;
 
 function canvas(w, h, draw) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  draw(c.getContext('2d', CPU2D), w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   return t;
@@ -598,7 +599,7 @@ let _glow;
 function glowSprite() {
   if (_glow) return _glow;
   const c = document.createElement('canvas'); c.width = c.height = 64;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.35, 'rgba(255,255,255,0.35)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grd; g.fillRect(0, 0, 64, 64);

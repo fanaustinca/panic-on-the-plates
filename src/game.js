@@ -1,6 +1,7 @@
 // One match: owns the Three.js scene for a level, the Sim (host) or its mirror (client), the
 // cooks, input, network traffic and the in-game HUD feed.
 import * as THREE from 'three';
+import { CPU2D } from './render/geo.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { WORLDS, COLORS, SLOT_COLORS, NET_HZ, INGREDIENTS, METHOD_LABEL, T, upgMul } from './config.js';
 import { buildLevel } from './levels.js';
@@ -12,7 +13,7 @@ import { Chef } from './render/chef.js';
 import { makeItem, itemKey } from './render/items.js';
 import { sfx, playMusic, setIntensity } from './audio.js';
 import { tileAt } from './levels.js';
-import { keyNames } from './input.js';
+import { keyNames, touchUI } from './input.js';
 
 const SNAP_HZ = 20;
 // what falling off the kitchen sounds like in each world: [popup, sound]
@@ -23,13 +24,40 @@ const FALL = {
 
 function skyTexture(top, bottom) {
   const c = document.createElement('canvas'); c.width = 4; c.height = 256;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   const grd = g.createLinearGradient(0, 0, 0, 256);
   grd.addColorStop(0, '#' + top.toString(16).padStart(6, '0'));
   grd.addColorStop(1, '#' + bottom.toString(16).padStart(6, '0'));
   g.fillStyle = grd; g.fillRect(0, 0, 4, 256);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return t;
+}
+
+/** convex hull of 2D points (monotone chain), counter-clockwise in screen space */
+function convexHull(P) {
+  const p = P.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+/** does convex polygon `hull`, moved by (sx, sy), overlap box [x0, y0, x1, y1]? (separating axes) */
+function polyHitsBox(hull, sx, sy, [x0, y0, x1, y1]) {
+  let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
+  for (const p of hull) { a = Math.min(a, p[0] + sx); b = Math.max(b, p[0] + sx); c = Math.min(c, p[1] + sy); d = Math.max(d, p[1] + sy); }
+  if (b <= x0 || a >= x1 || d <= y0 || c >= y1) return false;
+  const n = hull.length;
+  for (let i = 0; i < n; i++) {
+    const p = hull[i], q = hull[(i + 1) % n];
+    const ax = q[1] - p[1], ay = p[0] - q[0];
+    const pr = (x, y) => ax * x + ay * y;
+    let pmin = Infinity, pmax = -Infinity;
+    for (const r of hull) { const v = pr(r[0] + sx, r[1] + sy); pmin = Math.min(pmin, v); pmax = Math.max(pmax, v); }
+    const bs = [pr(x0, y0), pr(x1, y0), pr(x0, y1), pr(x1, y1)];
+    if (Math.max(...bs) <= pmin || Math.min(...bs) >= pmax) return false;
+  }
+  return true;
 }
 
 export class Game {
@@ -58,6 +86,7 @@ export class Game {
     this.lastCount = null;
     this.buildScene();
     this.hud.startMatch(this);
+    this.fit(); // again, now that the HUD is on screen to be framed around
     playMusic(this.world.id, 0, opts.level);
   }
 
@@ -114,29 +143,99 @@ export class Game {
     if (i >= 0) { const p = this.sim.players[i]; if (p.held && this.isHost) this.sim.lose(p.held); this.sim.players.splice(i, 1); }
   }
 
+  /**
+   * Frame the kitchen in the part of the screen the HUD leaves free. The camera keeps its angle; we search the
+   * closest distance (biggest kitchen) at which the kitchen's outline, slid by a lens shift, touches no HUD panel
+   * (tickets, score, controls), and the world's dressing around it still fits on screen.
+   */
   fit() {
     const w = this.renderer.domElement.clientWidth || innerWidth, h = this.renderer.domElement.clientHeight || innerHeight;
-    const aspect = w / h;
-    this.camera.aspect = aspect;
-    const vfov = THREE.MathUtils.degToRad(this.camera.fov);
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
-    // the galleon gets extra room so its bow, stern and rigging frame the kitchen
-    const pad = this.world.id === 'pirate' ? [4.2, 3.2] : this.world.id === 'jungle' ? [2.6, 3.0] : this.world.id === 'factory' ? [3.4, 2.8] : [2.2, 1.8];
-    const W = this.L.W + pad[0], H = this.L.H + pad[1];
+    const cam = this.camera;
+    cam.aspect = w / h;
+    cam.clearViewOffset();
+    cam.updateProjectionMatrix();
+    if (this.hud.hud && this.hud.game === this) this.hud.layoutHud(this);
+    const rects = this.hud.hud && this.hud.game === this ? this.hud.hudRects() : [];
     const elev = THREE.MathUtils.degToRad(52);
-    // distance so the kitchen fits horizontally and (foreshortened) vertically, leaving room for the HUD
-    const dW = (W / 2) / Math.tan(hfov / 2) / 0.9;
-    const dH = (H * Math.sin(elev) / 2 + 0.9) / Math.tan(vfov / 2) / 0.84;
-    const d = Math.max(dW, dH);
-    this.camBase = new THREE.Vector3(0, Math.sin(elev) * d, Math.cos(elev) * d + 0.3);
-    this.camera.position.copy(this.camBase);
-    this.camLook = new THREE.Vector3(0, 0, 0.45);
-    this.camera.lookAt(this.camLook);
-    this.camera.updateProjectionMatrix();
+    const look = this.camLook = new THREE.Vector3(0, 0, 0.45);
+    const dir = new THREE.Vector3(0, Math.sin(elev), Math.cos(elev));
+    // what must stay visible: every tile, plus the head of a cook on the back row (sway and roll margin)
+    const X = this.L.W / 2 + 0.3, Z = this.L.H / 2 + 0.3;
+    const tight = [];
+    for (const x of [-X, X]) for (const z of [-Z, Z]) for (const y of [0, 1.7]) tight.push(new THREE.Vector3(x, y, z));
+    // the world's dressing (the galleon's bow and stern, the jungle canopy) frames the kitchen on roomy screens
+    const pad = this.world.id === 'pirate' ? [2.6, 1.6] : this.world.id === 'jungle' ? [1.6, 1.4] : this.world.id === 'factory' ? [2, 1.2] : [1.2, 0.9];
+    const roomy = h >= 520;
+    const dress = [];
+    for (const x of [-1, 1]) for (const z of [-1, 1]) dress.push(new THREE.Vector3(x * (X + pad[0] / 2), 0, z * (Z + pad[1] / 2)));
+    const toPx = (v) => { const p = v.clone().project(cam); return [(p.x * 0.5 + 0.5) * w, (-p.y * 0.5 + 0.5) * h]; };
+    const place = (d) => { cam.position.copy(look).addScaledVector(dir, d); cam.position.z += 0.3; cam.lookAt(look); cam.updateMatrixWorld(); };
+    const m = Math.max(6, Math.min(w, h) * 0.012);
+    const boxes = rects.map((r) => [r.left - m, r.top - m, r.right + m, r.bottom + m]);
+    // can the kitchen be framed from distance d? returns the lens shift [sx, sy] in px, or null
+    const tryD = (d) => {
+      place(d);
+      const hull = convexHull(tight.map(toPx));
+      const xs = hull.map((p) => p[0]), ys = hull.map((p) => p[1]);
+      let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      let lo = [m - x0, m - y0], hi = [w - m - x1, h - m - y1];
+      if (roomy) {
+        const D = dress.map(toPx);
+        const dx0 = Math.min(...D.map((p) => p[0])), dx1 = Math.max(...D.map((p) => p[0])), dy1 = Math.max(...D.map((p) => p[1]));
+        lo[0] = Math.max(lo[0], -dx0); hi[0] = Math.min(hi[0], w - dx1); hi[1] = Math.min(hi[1], h - dy1);
+      }
+      if (lo[0] > hi[0] || lo[1] > hi[1]) return null;
+      // prefer the kitchen centred on screen, then search outwards over the allowed shifts
+      const want = [(w - x0 - x1) / 2, (h - y0 - y1) / 2];
+      const N = 36, cand = [];
+      for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) cand.push([lo[0] + (hi[0] - lo[0]) * i / N, lo[1] + (hi[1] - lo[1]) * j / N]);
+      cand.push([Math.min(hi[0], Math.max(lo[0], want[0])), Math.min(hi[1], Math.max(lo[1], want[1]))]);
+      let best = null, bd = Infinity;
+      for (const c of cand) {
+        const e = (c[0] - want[0]) ** 2 + (c[1] - want[1]) ** 2;
+        if (e >= bd) continue;
+        if (boxes.some((b) => polyHitsBox(hull, c[0], c[1], b))) continue;
+        best = c; bd = e;
+      }
+      return best;
+    };
+    let dLo = 3, dHi = 220, shift = tryD(dHi);
+    if (shift) {
+      for (let i = 0; i < 26; i++) { const mid = (dLo + dHi) / 2; const s = tryD(mid); if (s) { dHi = mid; shift = s; } else dLo = mid; }
+    } else shift = [0, 0];
+    // a hair of breathing room, then settle on the shift found for it
+    const d = dHi * 1.015;
+    shift = tryD(d) || shift;
+    place(d);
+    this.camBase = cam.position.clone();
+    if (shift[0] || shift[1]) cam.setViewOffset(w, h, -shift[0], -shift[1], w, h);
+    cam.updateProjectionMatrix();
     // keep fog out of the kitchen itself: it only softens the far backdrop
     this.scene.fog.near = d * 1.35; this.scene.fog.far = d * 3.2;
     const db = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-    this.kitchen.parts.setScale(db.y / 2 * this.camera.projectionMatrix.elements[5]);
+    this.kitchen.parts.setScale(db.y / 2 * cam.projectionMatrix.elements[5]);
+    this.fitInfo = { d, shift, w, h };
+  }
+
+  /** the kitchen's outline on screen right now (CSS px), for layout checks */
+  kitchenHull() {
+    const X = this.L.W / 2 + 0.3, Z = this.L.H / 2 + 0.3, w = innerWidth, h = innerHeight, out = [];
+    this.camera.updateMatrixWorld();
+    for (const x of [-X, X]) for (const z of [-Z, Z]) for (const y of [0, 1.7]) { const p = new THREE.Vector3(x, y, z).project(this.camera); out.push([(p.x * 0.5 + 0.5) * w, (-p.y * 0.5 + 0.5) * h]); }
+    return convexHull(out);
+  }
+  /** HUD panels the kitchen overlaps right now ([] when the view is clear), checked against the real elements */
+  hudOverlaps() {
+    const hull = this.kitchenHull(), hits = [];
+    const els = [...document.querySelectorAll('.hud .score-card, .hud .ticket, .hud .keys, .hud .tb, .hud .stick')];
+    for (const e of els) {
+      const r = e.getBoundingClientRect();
+      if (!r.width || getComputedStyle(e).display === 'none' || e.closest('.probe')) continue;
+      if (polyHitsBox(hull, 0, 0, [r.left, r.top, r.right, r.bottom])) hits.push(e.className);
+    }
+    const xs = hull.map((p) => p[0]), ys = hull.map((p) => p[1]);
+    if (Math.min(...xs) < 0 || Math.max(...xs) > innerWidth || Math.min(...ys) < 0 || Math.max(...ys) > innerHeight) hits.push('offscreen');
+    return hits;
   }
 
   // ------------------------------------------------------------- network
@@ -376,28 +475,36 @@ export class Game {
 
   /** HUD hint for what Enter would do right now. */
   hint() {
+    const h = this.hint0();
+    // the touch Grab button names the action itself, so the line drops the key and keeps the words
+    return touchUI.on ? h.replace(/Hold <kbd>[^<]*<\/kbd> to/, 'Hold to').replace(/<kbd>[^<]*<\/kbd>\s*/g, '') : h;
+  }
+
+  hint0() {
+    this.actWord = 'Grab';
     const p = this.me, sim = this.sim;
     const KA = keyNames((this.locals[0] || {}).ctrl).act, KT = keyNames((this.locals[0] || {}).ctrl).throw;
     if (!p || p.ko > 0) return p && p.ko > 0 ? `Respawning in ${Math.ceil(p.ko)}…` : '';
     const H = p.held;
-    if (H && H.kind === 'ext') return `Hold <kbd>${KA}</kbd> to spray`;
+    if (H && H.kind === 'ext') { this.actWord = 'Spray'; return `Hold <kbd>${KA}</kbd> to spray`; }
     if (!p.target) return H ? `Carrying ${describe(H)}${H.kind === 'ing' ? ` · <kbd>${KT}</kbd> throw` : ''}` : '';
-    const verb0 = (v) => `<kbd>${KA}</kbd> ${v}`;
+    const word = (v) => { const w0 = v.split(' ')[0].replace(/!$/, ''); this.actWord = w0 === 'Put' ? 'Drop' : w0 === 'Take' || w0 === 'Pick' || w0 === 'Collect' ? 'Grab' : w0 === 'Drop' ? 'Drop' : w0; };
+    const verb0 = (v) => { word(v); return `<kbd>${KA}</kbd> ${v}`; };
     if (p.target[2] != null) { const I = sim.mv[p.target[2]] && sim.mv[p.target[2]].item; return H ? verb0(I ? 'Combine' : 'Put down') : I ? verb0('Pick up') : ''; }
     const tl = tileAt(this.L, p.target[0], p.target[1]), s = sim.st(p.target[0], p.target[1]);
     if (s.fire) return 'On fire! Use the extinguisher';
     const I = s.item;
-    const verb = (v) => `<kbd>${KA}</kbd> ${v}`;
+    const verb = verb0;
     switch (tl.st) {
       case 'bin': return H ? '' : verb(`Grab ${INGREDIENTS[tl.ing].name}`);
-      case 'board': if (!H && I && I.kind === 'ing' && I.s === 'raw') return `Hold <kbd>${KA}</kbd> to chop`; break;
-      case 'sink': if (!H && s.dirty) return `Hold <kbd>${KA}</kbd> to wash`; if (!H && s.clean) return verb('Take clean plate'); if (H && H.kind === 'plate' && H.dirty) return verb('Drop plates in sink'); break;
+      case 'board': if (!H && I && I.kind === 'ing' && I.s === 'raw') { this.actWord = 'Chop'; return `Hold <kbd>${KA}</kbd> to chop`; } break;
+      case 'sink': if (!H && s.dirty) { this.actWord = 'Wash'; return `Hold <kbd>${KA}</kbd> to wash`; } if (!H && s.clean) return verb('Take clean plate'); if (H && H.kind === 'plate' && H.dirty) return verb('Drop plates in sink'); break;
       case 'return': if (!H && s.dirty) return verb('Collect dirty plates'); break;
       case 'trash': if (H) return verb('Bin it'); break;
       case 'window': if (H && H.kind === 'plate' && H.c.length) return verb('Serve!'); break;
       case 'lever': return verb('Flip conveyor');
       case 'pan': case 'pot': case 'oven':
-        if (H && H.kind === 'ing' && H.s === 'chopped' && INGREDIENTS[H.ing].method === tl.st) return verb(`${METHOD_LABEL[tl.st].replace(/ed$/, '')} it`);
+        if (H && H.kind === 'ing' && H.s === 'chopped' && INGREDIENTS[H.ing].method === tl.st) return verb(`${{ pan: 'Fry', pot: 'Boil', oven: 'Bake' }[tl.st]} it`);
         if (!H && I) return verb('Take it out');
         if (H && H.kind === 'plate' && I && I.s === 'cooked') return verb('Plate it');
         break;

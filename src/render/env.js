@@ -1,5 +1,6 @@
 // Per-world backdrop: what you see in the gaps and around the kitchen (sea, lava, space, sky...).
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { mat, part, sph, cyl, box, cone, tor, capsule, ico, dode } from './items.js';
 import { glowTex, barkTex } from './textures.js';
 import { branch, leafClump, jungleTree, vine, swayVines } from './treehouse.js';
@@ -11,7 +12,7 @@ import { basaltIslands, glacierIslands, cloudIslands, stationModules, clockIslan
 
 function patternTex(draw, rep) {
   const c = document.createElement('canvas'); c.width = c.height = 256;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   draw(g, 256);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep, rep); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
@@ -33,7 +34,7 @@ import { rng } from '../rng.js';
 
 function mistTex() {
   const c = document.createElement('canvas'); c.width = c.height = 256;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   for (let i = 0; i < 40; i++) {
     const x = r0() * 256, y = r0() * 256, rr = 30 + r0() * 60;
     for (const [ox, oy] of [[0, 0], [256, 0], [-256, 0], [0, 256], [0, -256]]) {
@@ -50,7 +51,7 @@ function mistTex() {
 /** Cloudy blue-green planet for the space station's view. */
 function earthTex(r) {
   const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   g.fillStyle = '#1a4a8a'; g.fillRect(0, 0, 1024, 512);
   for (let i = 0; i < 26; i++) {
     const x = r() * 1024, y = 90 + r() * 330, rr = 30 + r() * 90;
@@ -68,7 +69,7 @@ function earthTex(r) {
 /** The clock tower's great dial: frosted glass lit from behind, Roman numerals, minute ticks. */
 function dialTex() {
   const c = document.createElement('canvas'); c.width = c.height = 1024;
-  const g = c.getContext('2d'), m = 512;
+  const g = c.getContext('2d', CPU2D), m = 512;
   const grd = g.createRadialGradient(m, m, 40, m, m, m);
   grd.addColorStop(0, '#fff2d0'); grd.addColorStop(0.8, '#f2c880'); grd.addColorStop(1, '#c08a40');
   g.fillStyle = grd; g.fillRect(0, 0, 1024, 1024);

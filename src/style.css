@@ -21,7 +21,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #140e24; }
-canvas#view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 #ui { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
 #ui > * { pointer-events: auto; }
 #ui .passthrough { pointer-events: none; }
@@ -56,11 +56,11 @@ kbd {
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; background: rgba(255, 255, 255, 0.1); font-size: 13px; font-weight: 600; }
 
 /* ---------- title ---------- */
-.title-screen { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(380px, 520px) 1fr; align-items: center; padding: 4vh 5vw; }
+.title-screen { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(380px, 470px) 1fr; align-items: center; padding: 24px 56px 40px; }
 .logo { line-height: 0.86; margin-bottom: 18px; }
-.logo .l1 { font: 400 clamp(56px, 7.4vw, 104px) 'Lilita One'; color: var(--cream); display: block; text-shadow: 0 6px 0 var(--tomato-d), 0 12px 30px rgba(0, 0, 0, 0.45); transform: rotate(-3deg); }
-.logo .l2 { font: 400 clamp(26px, 2.6vw, 36px) 'Lilita One'; color: var(--mustard); display: block; margin: 6px 0 2px 10px; transform: rotate(-3deg); letter-spacing: 2px; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); }
-.logo .l3 { font: 400 clamp(56px, 7.4vw, 104px) 'Lilita One'; color: var(--tomato); display: block; text-shadow: 0 6px 0 #7a1a0a, 0 12px 30px rgba(0, 0, 0, 0.45); transform: rotate(-3deg); }
+.logo .l1 { font: 400 88px 'Lilita One'; color: var(--cream); display: block; text-shadow: 0 6px 0 var(--tomato-d), 0 12px 30px rgba(0, 0, 0, 0.45); transform: rotate(-3deg); }
+.logo .l2 { font: 400 31px 'Lilita One'; color: var(--mustard); display: block; margin: 6px 0 2px 10px; transform: rotate(-3deg); letter-spacing: 2px; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); }
+.logo .l3 { font: 400 88px 'Lilita One'; color: var(--tomato); display: block; text-shadow: 0 6px 0 #7a1a0a, 0 12px 30px rgba(0, 0, 0, 0.45); transform: rotate(-3deg); }
 .title-card { padding: 26px; display: flex; flex-direction: column; gap: 14px; }
 .title-card .row { display: flex; gap: 12px; }
 .title-card .row > * { flex: 1; }
@@ -71,7 +71,7 @@ input.text {
 }
 input.text:focus { border-color: var(--mustard); }
 .tagline { color: var(--cream); text-shadow: 0 2px 8px rgba(0,0,0,.6); font-size: 16px; margin: 0 0 6px; max-width: 460px; }
-.title-foot { position: absolute; left: 5vw; bottom: 18px; color: var(--muted); font-size: 13px; }
+.title-foot { position: absolute; left: 56px; bottom: 12px; color: var(--muted); font-size: 13px; }
 .title-foot b { color: var(--cream); }
 
 /* ---------- lobby ---------- */
@@ -139,7 +139,7 @@ input.text:focus { border-color: var(--mustard); }
 
 /* ---------- modal ---------- */
 .modal-bg { position: absolute; inset: 0; background: rgba(10, 6, 20, 0.6); display: grid; place-items: center; backdrop-filter: blur(4px); animation: fade 0.18s; z-index: 20; }
-.modal { padding: 26px; width: min(560px, 92vw); max-height: 86vh; display: flex; flex-direction: column; gap: 14px; animation: pop 0.25s cubic-bezier(.2, 1.4, .4, 1); }
+.modal { padding: 26px; width: min(560px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; animation: pop 0.25s cubic-bezier(.2, 1.4, .4, 1); }
 .modal h2 { font-size: 32px; }
 .modal .actions { display: flex; gap: 10px; justify-content: flex-end; }
 .rooms { display: flex; flex-direction: column; gap: 8px; }
@@ -157,21 +157,28 @@ input.text:focus { border-color: var(--mustard); }
 /* ---------- HUD ---------- */
 .hud { position: absolute; inset: 0; pointer-events: none; }
 .hud > * { pointer-events: none; }
-.score-card { position: absolute; left: 16px; top: 14px; padding: 10px 16px 12px; min-width: 230px; }
-.score-card .lv { font-size: 12.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-.score-card .sc { display: flex; align-items: center; gap: 10px; font: 400 40px 'Lilita One'; line-height: 1.1; }
+.hud { --z: 1; --tz: 1; --oz: 1; }
+.score-card { position: absolute; left: 14px; top: 14px; padding: 10px 16px 12px; min-width: 270px; scale: var(--z); transform-origin: 0 0; }
+.score-card .lv { font-size: 12.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; padding-right: 40px; margin-bottom: 4px; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.score-card .sc-row { display: flex; align-items: center; gap: 14px; }
+.score-card .sc { display: flex; align-items: center; gap: 10px; font: 400 40px 'Lilita One'; line-height: 1.1; flex: 1; }
 .coin { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff3a8, #ffcf3a 45%, #c99a14); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2), 0 3px 8px rgba(0, 0, 0, 0.3); display: grid; place-items: center; font: 400 18px 'Lilita One'; color: #8a5a00; }
 .combo { font: 400 18px 'Lilita One'; color: var(--mint); margin-left: 6px; }
 .starbar { position: relative; height: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.12); margin-top: 6px; }
 .starbar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: linear-gradient(90deg, var(--mustard), #ff9a3a); transition: width 0.4s; }
 .starbar .mk { position: absolute; top: -8px; width: 20px; height: 20px; margin-left: -10px; color: rgba(255, 255, 255, 0.3); }
 .starbar .mk.on { color: var(--mustard); filter: drop-shadow(0 0 6px rgba(255, 207, 58, 0.8)); }
-.timer { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); padding: 6px 22px; display: flex; align-items: center; gap: 10px; font: 400 36px 'Lilita One'; }
-.timer svg { width: 30px; height: 30px; }
-.timer.low { background: rgba(200, 30, 30, 0.85); animation: pulse 0.6s infinite alternate; }
-.orders { position: absolute; right: 14px; top: 14px; display: flex; flex-direction: row-reverse; gap: 10px; align-items: flex-start; max-width: calc(100vw - 560px); }
+.timer { display: flex; align-items: center; gap: 6px; padding: 2px 10px 2px 8px; border-radius: 12px; background: rgba(0, 0, 0, 0.28); font: 400 32px 'Lilita One'; line-height: 1.15; }
+.timer svg { width: 24px; height: 24px; }
+.timer.low { background: rgba(214, 36, 36, 0.92); animation: tpulse 0.6s infinite alternate; }
+@keyframes tpulse { to { transform: scale(1.08); } }
+.pbtn { position: absolute; top: 7px; right: 8px; width: 30px; height: 30px; border-radius: 10px; border: 0; display: grid; place-items: center; background: rgba(255, 255, 255, 0.1); color: var(--cream); cursor: pointer; pointer-events: auto !important; }
+.pbtn:hover { background: rgba(255, 255, 255, 0.22); }
+.pbtn svg { width: 18px; height: 18px; }
+.orders { position: absolute; right: calc(14px * var(--z)); top: calc(14px * var(--z)); display: flex; flex-direction: row-reverse; gap: 10px; align-items: flex-start; scale: var(--oz); transform-origin: 100% 0; padding-top: 6px; }
+.orders.probe { visibility: hidden; scale: 1; top: 0; right: 0; }
 .ticket {
-  position: relative; width: 150px; background: #fff8ea; color: var(--ink); border-radius: 10px 10px 4px 4px; padding: 9px 9px 14px; box-shadow: 0 10px 22px rgba(0, 0, 0, 0.35);
+  position: relative; flex: none; width: 150px; background: #fff8ea; color: var(--ink); border-radius: 10px 10px 4px 4px; padding: 9px 9px 14px; box-shadow: 0 10px 22px rgba(0, 0, 0, 0.35);
   animation: drop 0.45s cubic-bezier(.2, 1.4, .4, 1); transform-origin: top center;
 }
 .ticket::before { content: ''; position: absolute; top: -6px; left: 50%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--tomato); box-shadow: 0 2px 0 var(--tomato-d); }
@@ -188,23 +195,24 @@ input.text:focus { border-color: var(--mustard); }
 .ticket.urgent { animation: shake 0.35s infinite; }
 .ticket.done { animation: served 0.6s forwards; }
 .ticket.failed { animation: failed 0.6s forwards; }
-.hint { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 10px 18px; font-size: 18px; font-weight: 600; white-space: nowrap; transition: opacity 0.15s; }
+.hint { position: absolute; left: 50%; bottom: calc(22px * var(--z)); translate: -50% 0; scale: var(--z); transform-origin: 50% 100%; padding: 10px 18px; font-size: 18px; font-weight: 600; white-space: nowrap; transition: opacity 0.15s; }
 .hint:empty { opacity: 0; }
-.keys { position: absolute; left: 16px; bottom: 16px; padding: 10px 14px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
-.alert { position: absolute; left: 50%; top: 84px; transform: translateX(-50%); padding: 8px 18px; border-radius: 99px; font: 600 17px 'Fredoka'; display: flex; align-items: center; gap: 8px; background: rgba(30, 20, 50, 0.88); border: 2px solid var(--ac, var(--mustard)); opacity: 0; transition: opacity 0.2s, transform 0.2s; white-space: nowrap; }
-.alert.show { opacity: 1; transform: translateX(-50%) translateY(4px); }
+.keys { position: absolute; left: 14px; bottom: 14px; padding: 8px 12px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; scale: var(--z); transform-origin: 0 100%; }
+.hud.touch .keys { display: none; }
+.alert { position: absolute; left: 14px; top: calc(14px + 112px * var(--z)); transform-origin: 0 0; scale: var(--z); padding: 8px 18px; border-radius: 99px; font: 600 17px 'Fredoka'; display: flex; align-items: center; gap: 8px; background: rgba(30, 20, 50, 0.88); border: 2px solid var(--ac, var(--mustard)); opacity: 0; transition: opacity 0.2s, transform 0.2s; white-space: nowrap; }
+.alert.show { opacity: 1; transform: translateY(4px); }
 .alert svg { width: 22px; height: 22px; }
 .countdown { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
-.countdown .word { font: 400 clamp(90px, 14vw, 190px) 'Lilita One'; color: var(--cream); -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 10px 0 var(--ink), 0 20px 50px rgba(0, 0, 0, 0.5); }
+.countdown .word { font: 400 clamp(64px, min(14vw, 24vh), 190px) 'Lilita One'; color: var(--cream); -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 10px 0 var(--ink), 0 20px 50px rgba(0, 0, 0, 0.5); }
 .countdown .word.ready { color: var(--tomato); animation: slam 1.2s both; }
 .countdown .word.set { color: var(--mustard); animation: slam 1.2s both; }
 .countdown .word.cook { color: var(--mint); animation: cook 1.4s both; }
-.countdown .sub { position: absolute; bottom: 18vh; left: 50%; transform: translateX(-50%); padding: 12px 22px; text-align: center; font-size: 17px; max-width: 640px; animation: fade 0.4s; }
+.countdown .sub { position: absolute; bottom: max(14px, 10vh); scale: var(--z); transform-origin: 50% 100%; left: 50%; transform: translateX(-50%); padding: 12px 22px; text-align: center; font-size: 17px; max-width: 640px; animation: fade 0.4s; }
 .countdown .sub .st { font: 400 24px 'Lilita One'; display: block; color: var(--mustard); }
 .countdown .sub b { color: var(--mustard); }
 .countdown .bd { position: absolute; inset: 0; background: radial-gradient(circle, rgba(20, 10, 40, 0.1), rgba(20, 10, 40, 0.55)); }
 .timesup { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(20, 10, 40, 0.35); }
-.timesup .word { font: 400 clamp(80px, 11vw, 150px) 'Lilita One'; color: var(--tomato); -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 10px 0 var(--ink); animation: slam 0.9s both; }
+.timesup .word { font: 400 clamp(60px, min(11vw, 22vh), 150px) 'Lilita One'; color: var(--tomato); -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 10px 0 var(--ink); animation: slam 0.9s both; }
 .pause-btn { position: absolute; right: 14px; bottom: 14px; pointer-events: auto !important; }
 
 /* tags + popups */
@@ -230,7 +238,7 @@ input.text:focus { border-color: var(--mustard); }
 
 /* ---------- results ---------- */
 .results { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(14, 8, 28, 0.6); backdrop-filter: blur(6px); animation: fade 0.3s; }
-.results .card { width: min(760px, 94vw); padding: 26px 30px; text-align: center; display: flex; flex-direction: column; gap: 16px; animation: pop 0.35s cubic-bezier(.2, 1.4, .4, 1); }
+.results .card { width: min(760px, calc(100% - 28px)); max-height: calc(100% - 24px); overflow-y: auto; padding: 26px 30px; text-align: center; display: flex; flex-direction: column; gap: 16px; animation: pop 0.35s cubic-bezier(.2, 1.4, .4, 1); }
 .results h2 { font-size: 44px; }
 .results .big-stars { display: flex; justify-content: center; gap: 14px; }
 .results .big-stars svg { width: 88px; height: 88px; color: rgba(255, 255, 255, 0.14); }
@@ -263,15 +271,8 @@ input.text:focus { border-color: var(--mustard); }
 
 @media (max-width: 1150px) {
   .lobby { grid-template-columns: 250px 1fr 380px; }
-  .orders { max-width: calc(100vw - 300px); }
-  .ticket { width: 128px; }
-  .ticket .dimg { width: 58px; height: 58px; }
 }
-@media (max-width: 860px) {
-  .title-screen { grid-template-columns: 1fr; }
-  .lobby { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr auto; overflow-y: auto; }
-  .lobby-head, .lobby-foot { grid-column: 1; }
-}
+
 
 /* ---- wallet, upgrades, world vote, dice ---- */
 .wallet { display: flex; align-items: center; gap: 8px; padding: 8px 14px; margin-left: auto; font: 700 22px 'Fredoka'; }
@@ -305,7 +306,7 @@ input.text:focus { border-color: var(--mustard); }
 .earned span { color: var(--muted); font-size: 15px; font-weight: 500; }
 .dice-bg { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(10, 6, 20, 0.6); backdrop-filter: blur(4px); animation: fadein 0.2s; }
 @keyframes fadein { from { opacity: 0; } }
-.dice-card { padding: 24px 28px; text-align: center; width: min(640px, 92vw); }
+.dice-card { padding: 24px 28px; text-align: center; width: min(640px, calc(100% - 32px)); }
 .dice-card h2 { font-size: 30px; margin-bottom: 8px; }
 .dice3d { perspective: 600px; height: 120px; display: grid; place-items: center; margin: 6px 0 14px; }
 .cube { width: 84px; height: 84px; position: relative; transform-style: preserve-3d; transition: transform 2.6s cubic-bezier(0.15, 0.6, 0.2, 1); }
@@ -406,3 +407,67 @@ input.text:focus { border-color: var(--mustard); }
 .keys .pdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
 .results .critics { margin-top: 8px; font: 600 15px 'Fredoka'; color: #ffd23a; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .results .critics svg { width: 18px; height: 18px; }
+
+/* ---- touch controls */
+.tpad { position: absolute; inset: 0; pointer-events: none !important; display: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.hud.touch .tpad { display: block; }
+.tpad .tzone { position: absolute; left: 0; bottom: 0; width: 50%; height: 72%; pointer-events: auto; touch-action: none; }
+.tpad .stick { position: absolute; left: calc(26px * var(--tz)); bottom: calc(26px * var(--tz)); width: calc(132px * var(--tz)); height: calc(132px * var(--tz)); border-radius: 50%; background: radial-gradient(circle, rgba(255, 255, 255, 0.06) 40%, rgba(255, 255, 255, 0.16)); border: 3px solid rgba(255, 255, 255, 0.28); pointer-events: none; opacity: 0.75; transition: opacity 0.15s; }
+.tpad .stick.free { bottom: auto; translate: -50% -50%; opacity: 1; transition: none; }
+.tpad .stick .knob { position: absolute; left: 50%; top: 50%; width: 44%; height: 44%; margin: -22% 0 0 -22%; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff, #e8dcc6); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4); }
+.tpad .tbtns { position: absolute; right: 0; bottom: 0; width: 0; height: 0; }
+.tb { position: absolute; border-radius: 50%; border: 0; pointer-events: auto; touch-action: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; color: #fff; font: 700 calc(11px * var(--tz)) 'Fredoka', sans-serif; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3); box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.22), 0 6px 14px rgba(0, 0, 0, 0.35); opacity: 0.9; -webkit-tap-highlight-color: transparent; }
+.tb svg { width: 42%; height: 42%; }
+.tb.on { transform: scale(0.92); filter: brightness(1.2); opacity: 1; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22), 0 3px 8px rgba(0, 0, 0, 0.35); }
+.tb-act { --s: calc(92px * var(--tz)); right: calc(18px * var(--tz)); bottom: calc(18px * var(--tz)); background: var(--mint); font-size: calc(13px * var(--tz)); }
+.tb-jump { --s: calc(62px * var(--tz)); right: calc(122px * var(--tz)); bottom: calc(14px * var(--tz)); background: var(--sky); }
+.tb-dash { --s: calc(58px * var(--tz)); right: calc(108px * var(--tz)); bottom: calc(92px * var(--tz)); background: var(--grape); }
+.tb-throw { --s: calc(58px * var(--tz)); right: calc(28px * var(--tz)); bottom: calc(122px * var(--tz)); background: var(--tomato); transition: opacity 0.2s, filter 0.2s; }
+.tpad:not(.canthrow) .tb-throw { opacity: 0.4; filter: grayscale(0.5); }
+.tb { width: var(--s); height: var(--s); }
+.hud.touch .pbtn { width: 38px; height: 38px; top: 5px; right: 6px; }
+
+/* compact tickets for short screens */
+.hud.short .ticket { width: 128px; padding: 6px 6px 12px; display: grid; grid-template-columns: 46px 1fr; align-items: center; column-gap: 4px; border-radius: 8px 8px 3px 3px; }
+.hud.short .ticket .dn { grid-column: 1 / 3; font-size: 12.5px; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; margin-bottom: 2px; }
+.hud.short .ticket .dimg { width: 46px; height: 46px; margin: 0; }
+.hud.short .ticket .ings { justify-content: flex-start; gap: 3px; }
+.hud.short .ticket .ing, .hud.short .ticket .ing img { width: 24px; height: 24px; border-radius: 6px; }
+.hud.short .ticket .ing .m { width: 13px; height: 13px; right: -3px; bottom: -3px; border-width: 1.5px; }
+.hud.short .ticket .ing .m svg { width: 8px; height: 8px; }
+.hud.short .ticket::before { width: 10px; height: 10px; top: -4px; margin-left: -5px; }
+.hud.short .ticket .bar { bottom: 4px; height: 5px; }
+.hud.short .ticket .critic { font-size: 9.5px; top: -10px; padding: 1px 6px; }
+
+/* ---- menus scale with the window: laid out for at least 1000x600, then zoomed to fit (phones, small embeds) */
+.title-screen, .lobby, .modal-bg, .results, .dice-bg { zoom: var(--mz, 1); }
+body { -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+body.touch, body.touch * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+body.touch input { -webkit-user-select: text; user-select: text; }
+/* phones held upright: the kitchens are wide, so ask for landscape */
+.rotate { position: fixed; inset: 0; z-index: 100; display: none; place-items: center; text-align: center; padding: 24px; background: #140e24; color: var(--cream); }
+.rotate .ph { width: 70px; height: 112px; margin: 0 auto 18px; border: 6px solid var(--cream); border-radius: 14px; animation: rot 2.2s ease-in-out infinite; }
+.rotate h2 { font-size: 30px; margin-bottom: 8px; }
+.rotate p { color: var(--muted); margin: 0; }
+@keyframes rot { 0%, 25% { transform: rotate(0); } 55%, 100% { transform: rotate(-90deg); } }
+@media (orientation: portrait) and (max-width: 600px) { body.touch .rotate { display: grid; } }
+
+/* window wider than 5:3 and short: the menus have exactly 600 virtual px of height, so tighten them */
+@media (min-aspect-ratio: 5/3) and (max-height: 700px) {
+  .title-screen { padding: 16px 48px 30px; }
+  .logo { margin-bottom: 8px; }
+  .logo .l1, .logo .l3 { font-size: 62px; }
+  .logo .l2 { font-size: 24px; margin: 3px 0 1px 8px; }
+  .tagline { font-size: 14.5px; margin-bottom: 4px; }
+  .title-card { padding: 16px 18px; gap: 9px; }
+  .title-card .btn { padding: 10px 16px; font-size: 16px; }
+  .title-card .btn.big { padding: 12px 20px; font-size: 19px; }
+  .title-card .btn.small { padding: 7px 12px; font-size: 14px; }
+  input.text { padding: 9px 14px; font-size: 18px; }
+  .results .card { gap: 9px; padding: 18px 24px; }
+  .results h2 { font-size: 34px; }
+  .results .big-stars svg { width: 60px; height: 60px; }
+  .results .big-stars svg:nth-child(2) { width: 72px; height: 72px; transform: translateY(-8px); }
+  .results .total { font-size: 42px; }
+}
+.results .acts { position: sticky; bottom: -26px; padding: 10px 0 4px; background: linear-gradient(transparent, var(--panel-2) 30%); }

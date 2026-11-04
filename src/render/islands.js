@@ -2,6 +2,7 @@
 // islands get matching bases: basalt columns in the lava, glacier cliffs in the sea, cumulus
 // clouds, space-station modules and clockwork platforms.
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { mat, part, sph, cyl, box, dode, ico } from './items.js';
 import { wallTex, glowTex, textTex } from './textures.js';
 
@@ -179,7 +180,7 @@ export function stationModules(g, L, r, updaters) {
   truss(V(-W / 2 - 9, -0.6, zb), V(W / 2 + 9, -0.6, zb), 0.32);
   const solarT = (() => {
     const c = document.createElement('canvas'); c.width = 128; c.height = 256;
-    const x = c.getContext('2d');
+    const x = c.getContext('2d', CPU2D);
     x.fillStyle = '#0c1a4a'; x.fillRect(0, 0, 128, 256);
     for (let i = 0; i < 4; i++) for (let j = 0; j < 8; j++) {
       const gr = x.createLinearGradient(0, j * 32, 32, j * 32 + 32); gr.addColorStop(0, '#1d3a8a'); gr.addColorStop(1, '#0f2260');

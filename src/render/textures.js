@@ -1,5 +1,6 @@
 // Procedural canvas textures (no image assets to load): floors, walls, counter tops, labels.
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { rng } from '../rng.js';
 
 const cache = new Map();
@@ -16,7 +17,7 @@ function canvasTex(key, size, draw, { repeat = 1, srgb = true } = {}) {
   if (cache.has(k)) return cache.get(k);
   const c = document.createElement('canvas');
   c.width = c.height = size;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   draw(g, size, rng(key.split('').reduce((h, ch) => h * 31 + ch.charCodeAt(0), 7) >>> 0));
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -255,7 +256,7 @@ export function glowTex() {
 export function textTex(text, { w = 256, h = 64, bg = 'rgba(0,0,0,0)', fg = '#fff', font = '700 34px Fredoka, sans-serif', stroke = null } = {}) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', CPU2D);
   g.fillStyle = bg; g.fillRect(0, 0, w, h);
   g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
   if (stroke) { g.lineWidth = 6; g.strokeStyle = stroke; g.lineJoin = 'round'; g.strokeText(text, w / 2, h / 2 + 2); }

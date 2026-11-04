@@ -221,7 +221,7 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   await page.evaluate(() => { PANIC.app.startMatch('0-2'); const sim = PANIC.game.sim; while (sim.t < 0.05) sim.step(0.05); PANIC.app.devSpeed = 4; });
   await waitPlay(page);
   const ids = await page.evaluate(() => PANIC.game.locals.map((l) => l.id + ':' + l.ctrl));
-  assert(ids.length === 3 && ids[0].endsWith('kb1|free') && ids.some((x) => x.endsWith('kb2')) && ids.some((x) => x.endsWith('pad0')), 'three local cooks: ' + ids);
+  assert(ids.length === 3 && ids[0].endsWith('kb1|free|touch') && ids.some((x) => x.endsWith('kb2')) && ids.some((x) => x.endsWith('pad0')), 'three local cooks: ' + ids);
   const pos = () => page.evaluate(() => PANIC.game.sim.players.map((p) => [p.x, p.y]));
   const p0 = await pos();
   await page.bringToFront();
@@ -249,6 +249,69 @@ await T('couch co-op: second keyboard cook and a gamepad cook, dash and throw', 
   await shot(page, 'e2e-couch.png');
   await page.evaluate(() => { PANIC.app.devSpeed = 1; });
   assert(!errors.length, errors.join('\n'));
+  await page.close();
+});
+
+await T('touch: on-screen stick moves the cook, Throw and Jump buttons work', async () => {
+  const page = await browser.newPage();
+  const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
+  await page.emulate({ viewport: { width: 844, height: 390, isMobile: true, hasTouch: true, deviceScaleFactor: 1 }, userAgent: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36' });
+  await page.goto(base);
+  await page.waitForFunction(() => window.PANIC && PANIC.app && PANIC.app.ready);
+  await page.touchscreen.tap(400, 40);
+  assert(await page.evaluate(() => document.body.classList.contains('touch')), 'touch mode after the first tap');
+  await page.evaluate(() => { PANIC.app.solo(); PANIC.app.startMatch('0-0'); const sim = PANIC.game.sim; while (sim.t < 0.05) sim.step(0.05); PANIC.app.devSpeed = 4; });
+  await waitPlay(page);
+  assert(await page.evaluate(() => getComputedStyle(document.querySelector('.tb-act')).display !== 'none'), 'touch buttons shown');
+  assert(await page.evaluate(() => getComputedStyle(document.querySelector('.hud .keys')).display === 'none'), 'keyboard legend hidden');
+  const p0 = await page.evaluate(() => [PANIC.game.me.x, PANIC.game.me.y]);
+  // thumb down on the left half, slide right
+  await page.touchscreen.touchStart(150, 260);
+  await page.touchscreen.touchMove(200, 260);
+  await page.touchscreen.touchMove(240, 260);
+  await page.waitForFunction((x0) => PANIC.game.me.x > x0 + 0.4, { polling: 50, timeout: 90000 }, p0[0]).catch(() => {});
+  await page.touchscreen.touchEnd();
+  const p1 = await page.evaluate(() => [PANIC.game.me.x, PANIC.game.me.y]);
+  assert(p1[0] > p0[0] + 0.3, `stick moved the cook right: ${p0} -> ${p1}`);
+  assert(await page.evaluate(() => PANIC.app.input.touch.mx === 0), 'stick springs back');
+  // throw with the button
+  await page.evaluate(() => { const g = PANIC.game; g.me.held = { kind: 'ing', ing: g.L.recipes[0].ings[0], s: 'raw', p: 0 }; });
+  const tb = await page.evaluate(() => { const r = document.querySelector('.tb-throw').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; });
+  await page.touchscreen.tap(tb[0], tb[1]);
+  await page.waitForFunction(() => PANIC.game.me.stats.throws === 1, { polling: 50, timeout: 60000 });
+  // the Grab button names the action
+  const word = await page.evaluate(() => document.querySelector('.tb-act span').textContent);
+  assert(word.length > 1, 'Grab button label: ' + word);
+  await shot(page, 'e2e-touch.png');
+  await page.evaluate(() => { PANIC.app.devSpeed = 1; });
+  assert(!errors.length, errors.join('\n'));
+  await page.close();
+});
+
+await T('layout: the kitchen never sits under the HUD at common screen sizes', async () => {
+  const page = await browser.newPage();
+  await page.goto(base);
+  await page.waitForFunction(() => window.PANIC && PANIC.app && PANIC.app.ready);
+  const bad = [];
+  for (const [w, h] of [[1920, 1080], [1280, 720], [960, 540], [800, 450], [1024, 768], [2560, 1080]]) {
+    await page.setViewport({ width: w, height: h });
+    for (const lv of ['0-6', '5-10', '2-9', '7-4']) {
+      const hits = await page.evaluate(async (lv) => {
+        const app = PANIC.app; if (!app.members.size) app.solo(); if (PANIC.game) app.backToLobby();
+        app.startMatch(lv); const g = PANIC.game, ui = app.ui;
+        while (g.sim.t < 1) g.sim.step(0.05);
+        const R = ui.ordersRect, oz = +document.querySelector('#orders').style.getPropertyValue('--oz');
+        const n = Math.round((R.right - R.left) / ((ui.ticketBox.w + 10) * oz));
+        g.sim.maxOrders = 99;
+        while (g.sim.orders.length < n) g.sim.spawnOrder();
+        ui.updateMatch(g, 1, 0.016);
+        await new Promise((r) => setTimeout(r, 700));
+        return g.hudOverlaps();
+      }, lv);
+      if (hits.length) bad.push(`${w}x${h} ${lv}: ${hits.join(',')}`);
+    }
+  }
+  assert(!bad.length, bad.join('\n'));
   await page.close();
 });
 

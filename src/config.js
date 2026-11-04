@@ -1,7 +1,7 @@
 // Static game data: worlds, ingredients, recipes, outfits and tuning constants.
 // Everything here is plain data so the node logic tests can import it.
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 export const MAX_PLAYERS = 4;
 export const NET_HZ = 15;
 

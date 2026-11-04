@@ -1,6 +1,7 @@
 // The virtual lobby: a little stage where every connected cook stands in their chosen outfit,
 // themed after the level currently winning the vote. Also used as the title-screen backdrop.
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { COLORS, WORLDS, SLOT_COLORS } from '../config.js';
 import { Chef } from './chef.js';
 import { mat, part, sph, cyl, box, cone, tor, makeIngredient } from './items.js';
@@ -41,7 +42,7 @@ export class LobbyScene {
     const W = WORLDS[wi], S = STYLE[W.id];
     this.stage.clear();
     const c = document.createElement('canvas'); c.width = 2; c.height = 256;
-    const g = c.getContext('2d'); const grd = g.createLinearGradient(0, 0, 0, 256);
+    const g = c.getContext('2d', CPU2D); const grd = g.createLinearGradient(0, 0, 0, 256);
     grd.addColorStop(0, '#1a1430'); grd.addColorStop(0.6, '#' + W.fog.toString(16).padStart(6, '0')); grd.addColorStop(1, '#0e0a1a');
     g.fillStyle = grd; g.fillRect(0, 0, 2, 256);
     this.scene.background = new THREE.CanvasTexture(c);

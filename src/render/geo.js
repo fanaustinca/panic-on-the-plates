@@ -3,6 +3,12 @@
 // canvas textures. Everything is cached by key, so a model is built once and cloned.
 import * as THREE from 'three';
 
+/**
+ * 2D canvases we paint textures on are kept in CPU memory: a GPU-backed canvas loses its pixels when the GPU
+ * process resets (it happens on some first launches), and the texture made from it would upload black.
+ */
+export const CPU2D = { willReadFrequently: true };
+
 export const TAU = Math.PI * 2;
 export const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 export const lerp = (a, b, t) => a + (b - a) * t;
@@ -225,7 +231,7 @@ export function ctex(key, size, draw, { srgb = true, repeat = null } = {}) {
   return once('tex:' + key, () => {
     const cv = document.createElement('canvas');
     cv.width = cv.height = size;
-    const g = cv.getContext('2d');
+    const g = cv.getContext('2d', CPU2D);
     draw(g, size);
     const t = new THREE.CanvasTexture(cv);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;

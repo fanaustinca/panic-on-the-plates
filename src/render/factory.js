@@ -3,6 +3,7 @@
 // tanks, a gantry crane and a wall of factory windows. Returns spark/steam emitters for the
 // kitchen's particle system.
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { mat, part, sph, cyl, box } from './items.js';
 import { stripeTex, glowTex, beltTex } from './textures.js';
 
@@ -11,7 +12,7 @@ const FLOOR = -7;
 
 function canvas(w, h, draw) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  draw(c.getContext('2d', CPU2D), w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
   return t;

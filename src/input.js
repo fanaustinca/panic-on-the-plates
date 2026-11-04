@@ -6,7 +6,8 @@
 //   'pad0'..'pad3'  gamepads (standard mapping): stick / d-pad, A jump, X or B interact, Y throw, bumpers or
 //          triggers dash, Start pauses
 //   'free' every gamepad not already driving another cook
-//   controllers combine with '|': you are 'kb|free' (or 'kb1|free' once a second cook takes the arrows)
+//   'touch' the on-screen joystick and buttons (phones and tablets)
+//   controllers combine with '|': you are 'kb|free|touch' (or 'kb1|free|touch' once a second cook takes the arrows)
 // Tap interact = grab / place, hold = chop / wash / spray. Esc (or Start) pauses.
 export const LAYOUT = {
   kb: { up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], jump: ['Space'], act: ['Enter', 'NumpadEnter', 'KeyE', 'KeyF'], dash: ['ShiftLeft', 'ShiftRight', 'Period'], throw: ['KeyQ', 'Slash'] },
@@ -19,9 +20,16 @@ export const KEYNAMES = {
   kb1: { move: 'WASD', jump: 'Space', act: 'E', dash: 'L-Shift', throw: 'Q' },
   kb2: { move: 'Arrows', jump: 'R-Shift', act: 'Enter', dash: '.', throw: '/' },
   pad: { move: 'Stick', jump: 'A', act: 'X', dash: 'RB', throw: 'Y' },
+  touch: { move: 'Stick', jump: 'Jump', act: 'Grab', dash: 'Dash', throw: 'Throw' },
   any: { move: 'WASD', jump: 'Space', act: 'Enter', dash: 'Shift', throw: 'Q' },
 };
-export const keyNames = (ctrl) => { const c = String(ctrl || 'kb').split('|')[0]; return KEYNAMES[c] || (c.startsWith('pad') ? KEYNAMES.pad : KEYNAMES.kb); };
+/** true once the device is played by touch (a coarse pointer, or the first real touch) */
+export const touchUI = { on: typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches };
+export const keyNames = (ctrl) => {
+  const parts = String(ctrl || 'kb').split('|'), c = parts[0];
+  if (touchUI.on && parts.includes('touch')) return KEYNAMES.touch;
+  return KEYNAMES[c] || (c.startsWith('pad') ? KEYNAMES.pad : KEYNAMES.kb);
+};
 export const ctrlLabel = (ctrl) => { const c = String(ctrl || 'kb').split('|')[0]; return c === 'kb2' ? 'Arrows + Enter' : c === 'kb1' ? 'WASD + E' : c.startsWith('pad') ? `Gamepad ${+c.slice(3) + 1}` : 'Keyboard'; };
 
 const PAD = { jump: [0], act: [2, 1], throw: [3], dash: [4, 5, 6, 7], start: [9] };
@@ -40,6 +48,8 @@ export class Input {
     this.padDown = [];        // edge presses per gamepad this frame
     this.padUp = [];
     this.claimed = new Set(); // gamepads already driving a cook
+    // on-screen controls: stick vector and button states, with edges like the keys
+    this.touch = { mx: 0, my: 0, on: new Set(), downs: new Set(), ups: new Set() };
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
       const k = e.code;
@@ -71,7 +81,15 @@ export class Input {
     }
   }
   padCount() { const l = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []; return [...(l || [])].filter((g) => g && g.connected).length; }
-  endFrame() { this.downs.clear(); this.ups.clear(); }
+  endFrame() { this.downs.clear(); this.ups.clear(); this.touch.downs.clear(); this.touch.ups.clear(); }
+
+  /** on-screen controls feed: stick (-1..1 each) and buttons 'jump' | 'act' | 'dash' | 'throw' */
+  touchStick(mx, my) { this.touch.mx = mx; this.touch.my = my; }
+  touchButton(b, down) {
+    const T = this.touch;
+    if (down && !T.on.has(b)) { T.on.add(b); T.downs.add(b); }
+    else if (!down && T.on.has(b)) { T.on.delete(b); T.ups.add(b); }
+  }
 
   has(...codes) { return codes.some((c) => this.keys.has(c)); }
 
@@ -82,7 +100,7 @@ export class Input {
   read(ctrl) {
     const out = { mx: 0, my: 0, jump: false, press: false, release: false, dash: false, throw: false, holding: false };
     if (!this.enabled) return out;
-    const parts = String(ctrl === 'any' ? 'kb|free' : ctrl).split('|');
+    const parts = String(ctrl === 'any' ? 'kb|free|touch' : ctrl).split('|');
     const kbs = parts.filter((c) => LAYOUT[c]);
     for (const id of kbs) {
       const L = LAYOUT[id];
@@ -94,6 +112,13 @@ export class Input {
       out.jump ||= dn('jump'); out.press ||= dn('act'); out.dash ||= dn('dash'); out.throw ||= dn('throw');
       out.release ||= L.act.some((c) => this.ups.has(c));
       out.holding ||= on('act');
+    }
+    if (parts.includes('touch')) {
+      const T = this.touch;
+      out.mx += T.mx; out.my += T.my;
+      out.jump ||= T.downs.has('jump'); out.press ||= T.downs.has('act'); out.dash ||= T.downs.has('dash'); out.throw ||= T.downs.has('throw');
+      out.release ||= T.ups.has('act');
+      out.holding ||= T.on.has('act');
     }
     const pads = [];
     for (const c of parts) {
@@ -119,5 +144,8 @@ export class Input {
 
   /** legacy single-cook helpers (menus) */
   move() { const r = this.read('kb'); return { mx: r.mx, my: r.my }; }
-  clear() { this.keys.clear(); this.downs.clear(); this.ups.clear(); }
+  clear() {
+    this.keys.clear(); this.downs.clear(); this.ups.clear();
+    const T = this.touch; T.mx = T.my = 0; T.on.clear(); T.downs.clear(); T.ups.clear();
+  }
 }

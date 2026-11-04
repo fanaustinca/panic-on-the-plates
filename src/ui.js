@@ -8,7 +8,8 @@ import { ingIcon, dishIcon, chefIcon } from './render/thumbs.js';
 import { loadSave, writeSave, totalStars, levelUnlocked, outfitUnlocked } from './save.js';
 const lvLabel = (wi, li) => (li === MP_LEVEL ? `${wi + 1}-MP` : `${wi + 1}-${li + 1}`);
 import { sfx } from './audio.js';
-import { ctrlLabel, keyNames } from './input.js';
+import { ctrlLabel, keyNames, touchUI } from './input.js';
+import { TouchPad } from './touch.js';
 
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -178,15 +179,18 @@ export class UI {
   howTo() {
     this.modal(`<h2>How to cook</h2>
       <div class="howto">
-        <div><b>Move</b><br><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows to run</div>
+        ${touchUI.on ? `<div><b>Move</b><br>Put your thumb anywhere on the <b>left half</b> of the screen and slide</div>
+        <div><b>Jump</b><br>The blue <b>Jump</b> button hops gaps &amp; hazards</div>
+        <div><b>Interact</b><br>Tap the big green button to grab, place, cook, serve. <b>Hold</b> it to chop, wash or spray</div>
+        <div><b>Dash &amp; throw</b><br><b>Dash</b> for a burst of speed. <b>Throw</b> tosses the food in your hands: to a teammate, onto a counter, or straight into its pan</div>` : `<div><b>Move</b><br><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows to run</div>
         <div><b>Jump</b><br><kbd>Space</kbd> to hop gaps &amp; hazards</div>
         <div><b>Interact</b><br>Tap <kbd>Enter</kbd> to grab, place, cook, serve. Hold it to chop, wash or spray</div>
-        <div><b>Dash &amp; throw</b><br><kbd>Shift</kbd> dashes. <kbd>Q</kbd> throws the food in your hands: to a teammate, onto a counter, or straight into its pan</div>
+        <div><b>Dash &amp; throw</b><br><kbd>Shift</kbd> dashes. <kbd>Q</kbd> throws the food in your hands: to a teammate, onto a counter, or straight into its pan</div>`}
         <div><b>1.</b> Grab ingredients from the crates and <b>chop</b> them on a board.</div>
         <div><b>2.</b> Cook chopped food in the <b>pan</b>, <b>pot</b> or <b>oven</b> its ticket shows.</div>
         <div><b>3.</b> Combine everything on a <b>clean plate</b> and serve at the <b>ORDER UP</b> window.</div>
         <div><b>4.</b> Dirty plates come back. <b>Wash</b> them in the sink!</div>
-        <div><b>Fire!</b> Overcooked food bursts into flames that spread. Grab the red <b>extinguisher</b> and hold Enter.</div>
+        <div><b>Fire!</b> Overcooked food bursts into flames that spread. Grab the red <b>extinguisher</b> and hold ${touchUI.on ? 'the green button' : 'Enter'}.</div>
         <div><b>Golden orders</b> A food critic orders now and then: less patience, <b>double points</b>. Past half time comes <b>Rush Hour</b>: orders pour in and tips are doubled.</div>
         <div><b>Couch co-op</b> In a solo kitchen add a <b>keyboard cook</b> (you keep WASD + <kbd>E</kbd>, they get the arrows + <kbd>Enter</kbd>) or press <kbd>Y</kbd> on a <b>gamepad</b>: up to 4 cooks on one screen.</div>
         <div><b>Gamepad</b> Stick to move, <kbd>A</kbd> jump, <kbd>X</kbd> interact (hold to work), <kbd>Y</kbd> throw, bumpers dash, <kbd>Start</kbd> menu.</div>
@@ -384,23 +388,95 @@ export class UI {
     const L = game.L;
     const v = el(`
       <div class="hud">
-        <div class="panel score-card"><div class="lv">${lvLabel(game.L.world, game.L.index)} · ${esc(L.name)}</div><div class="sc"><span class="coin">$</span><span id="score">0</span><span class="combo" id="combo"></span></div>
-          <div class="starbar"><div class="fill" id="sfill"></div>${game.sim.stars.map((s, i) => `<span class="mk" id="mk${i}" style="left:${(s / game.sim.stars[2]) * 100}%">${ICON.star}</span>`).join('')}</div></div>
-        <div class="panel timer" id="timer">${ICON.clock}<span id="time">0:00</span></div>
+        <div class="panel score-card" id="scard">
+          <div class="lv">${lvLabel(game.L.world, game.L.index)} · ${esc(L.name)}</div>
+          <div class="sc-row"><div class="sc"><span class="coin">$</span><span id="score">0</span><span class="combo" id="combo"></span></div><div class="timer" id="timer">${ICON.clock}<span id="time">0:00</span></div></div>
+          <div class="starbar"><div class="fill" id="sfill"></div>${game.sim.stars.map((s, i) => `<span class="mk" id="mk${i}" style="left:${(s / game.sim.stars[2]) * 100}%">${ICON.star}</span>`).join('')}</div>
+          <button class="pbtn" id="pbtn" aria-label="Pause">${ICON.pause}</button>
+        </div>
         <div class="orders" id="orders"></div>
         <div class="alert" id="alert"></div>
         <div class="panel hint" id="hint"></div>
-        <div class="panel keys">${game.locals.map((lc, i) => { const k = keyNames(lc.ctrl), p = game.sim.player(lc.id); return `<span>${game.locals.length > 1 ? `<i class="pdot" style="background:${hex(SLOT_COLORS[p.slot % 4])}"></i>` : ''}<kbd>${k.move}</kbd> move · <kbd>${k.jump}</kbd> jump · <kbd>${k.act}</kbd> grab / hold to work · <kbd>${k.dash}</kbd> dash · <kbd>${k.throw}</kbd> throw${i === 0 ? ' · <kbd>Esc</kbd> menu' : ''}</span>`; }).join('')}</div>
+        <div class="panel keys" id="keys">${game.locals.map((lc, i) => { const k = keyNames(lc.ctrl), p = game.sim.player(lc.id); return `<span>${game.locals.length > 1 ? `<i class="pdot" style="background:${hex(SLOT_COLORS[p.slot % 4])}"></i>` : ''}<kbd>${k.move}</kbd> move · <kbd>${k.jump}</kbd> jump · <kbd>${k.act}</kbd> grab / hold to work · <kbd>${k.dash}</kbd> dash · <kbd>${k.throw}</kbd> throw${i === 0 ? ' · <kbd>Esc</kbd> menu' : ''}</span>`; }).join('')}</div>
         <div class="countdown" id="cd"></div>
       </div>`);
     this.root.appendChild(v);
     this.hud = v;
+    if (!this.touchPad) this.touchPad = new TouchPad(this.app.input);
+    v.appendChild(this.touchPad.el);
+    v.querySelector('#pbtn').addEventListener('click', (e) => { e.stopPropagation(); sfx.ui(); this.app.togglePause(); });
     this.tickets = new Map();
     this.lastScore = -1;
     this.cdWord = null;
     this.alertT = 0;
     this.lastTimeS = null;
     this.tagMap = new Map();
+    this.ticketBox = null;
+    this.layoutHud(game);
+  }
+
+  /** tallest ticket this level can show (base CSS px), measured off-screen once per round */
+  measureTickets(game) {
+    const O = this.hud.querySelector('#orders');
+    const probe = el('<div class="orders probe"></div>');
+    this.hud.appendChild(probe);
+    let h = 0, w = 0;
+    for (const rc of game.L.recipes) { const n = this.ticketNode(rc, false); probe.appendChild(n); h = Math.max(h, n.offsetHeight); w = Math.max(w, n.offsetWidth); }
+    probe.remove();
+    return { w: w || 150, h: (h || 170) + 14 };
+  }
+
+  ticketNode(rc, gold) {
+    return el(`<div class="ticket ${gold ? 'gold' : ''}">${gold ? '<div class="critic">★ CRITIC ★ x2</div>' : ''}<div class="dn">${esc(rc.name)}</div><img class="dimg" src="${dishIcon(rc, finals(rc))}" alt="" /><div class="ings">${rc.ings.map((id) => { const m = INGREDIENTS[id].method; const [ic, col] = METHOD_ICON[m]; return `<span class="ing" title="${esc(INGREDIENTS[id].name)}"><img src="${ingIcon(id, 'raw')}" alt="" /><span class="m" style="background:${col}">${ICON[ic]}</span></span>`; }).join('')}</div><div class="bar"><i></i></div></div>`);
+  }
+
+  /**
+   * Size the HUD for this screen and keep a rail for the most tickets this round can hold, so the camera can
+   * frame the kitchen in the space that is left (Game.fit asks hudRects()).
+   */
+  layoutHud(game) {
+    const v = this.hud;
+    if (!v) return;
+    const W = innerWidth, H = innerHeight;
+    const touch = touchUI.on;
+    v.classList.toggle('touch', touch);
+    // short screens (phones on their side) get compact tickets: the dish beside its ingredients
+    const short = H < 520;
+    if (short !== this.hudShort || !this.ticketBox) { this.hudShort = short; v.classList.toggle('short', short); this.ticketBox = this.measureTickets(game); }
+    // one scale for the panels: 1 at 1280x720, never so small that text stops being readable
+    const z = Math.max(short ? 0.62 : 0.68, Math.min(1.3, W / 1280, H / 720));
+    // touch controls follow the size of the hand, not of the screen
+    const tz = Math.max(0.72, Math.min(1.15, Math.min(W, H) / 480));
+    v.style.setProperty('--z', z.toFixed(3));
+    v.style.setProperty('--tz', tz.toFixed(3));
+    const sc = v.querySelector('#scard').getBoundingClientRect();
+    // tickets: a row from the right edge back to the score card, shrunk until the fullest rush fits
+    const L = game.L;
+    const n = game.sim.maxOrders + (Number.isFinite(rushStart(L)) ? 1 : 0);
+    const gap = 10, edge = 14 * z, tw = this.ticketBox.w + gap;
+    const avail = W - sc.right - edge - 12 * z;
+    const oz = Math.max(0.45, Math.min(short ? Math.max(z, 0.8) : z, avail / (n * tw)));
+    const O = v.querySelector('#orders');
+    O.style.setProperty('--oz', oz.toFixed(3));
+    const ow = n * tw * oz;
+    this.ordersRect = { left: W - edge - ow, right: W - edge, top: 0, bottom: edge + this.ticketBox.h * oz };
+  }
+
+  /** screen rects (CSS px) the kitchen must stay out of */
+  hudRects() {
+    const v = this.hud;
+    if (!v) return [];
+    const W = innerWidth, H = innerHeight;
+    const z = +v.style.getPropertyValue('--z') || 1;
+    const out = [v.querySelector('#scard').getBoundingClientRect(), this.ordersRect];
+    const keys = v.querySelector('#keys');
+    if (!touchUI.on && keys.offsetParent) out.push(keys.getBoundingClientRect());
+    let side = 0;
+    if (touchUI.on) { const rs = this.touchPad.rects(); out.push(...rs); side = Math.max(0, ...rs.map((r) => Math.min(r.right, W - r.left))); }
+    // the hint line, bottom centre
+    const hw = Math.min(W - 2 * side - 20, 520 * z), hh = 48 * z;
+    out.push({ left: (W - hw) / 2, right: (W + hw) / 2, top: H - 22 * z - hh, bottom: H });
+    return out;
   }
 
   updateMatch(game, t, dt) {
@@ -438,8 +514,7 @@ export class UI {
       live.add(o.id);
       let tk = this.tickets.get(o.id);
       if (!tk) {
-        const rc = L.recipes[o.r];
-        const node = el(`<div class="ticket ${o.gold ? 'gold' : ''}">${o.gold ? '<div class="critic">★ CRITIC ★ x2</div>' : ''}<div class="dn">${esc(rc.name)}</div><img class="dimg" src="${dishIcon(rc, finals(rc))}" alt="" /><div class="ings">${rc.ings.map((id) => { const m = INGREDIENTS[id].method; const [ic, col] = METHOD_ICON[m]; return `<span class="ing" title="${esc(INGREDIENTS[id].name)}"><img src="${ingIcon(id, 'raw')}" alt="" /><span class="m" style="background:${col}">${ICON[ic]}</span></span>`; }).join('')}</div><div class="bar"><i></i></div></div>`);
+        const node = this.ticketNode(L.recipes[o.r], o.gold);
         O.appendChild(node);
         tk = { node, bar: node.querySelector('.bar i') };
         this.tickets.set(o.id, tk);
@@ -454,6 +529,7 @@ export class UI {
     const h = game.hint();
     const hintEl = v.querySelector('#hint');
     if (hintEl.dataset.h !== h) { hintEl.dataset.h = h; hintEl.innerHTML = sim.phase === 'play' ? h : ''; }
+    if (touchUI.on && this.touchPad) this.touchPad.setAct(game.actWord || 'Grab', game.me && game.me.held && game.me.held.kind === 'ing');
     // hazard alerts (time based, so clients see them too)
     this.alertT -= dt;
     const env = envAt(L, Math.max(0, t));
@@ -528,7 +604,7 @@ export class UI {
     this.hud.appendChild(el(`<div class="timesup"><div class="word">Time's up!</div></div>`));
   }
 
-  endMatch() { this.hud = null; this.tagsEl.innerHTML = ''; this.tagMap = new Map(); }
+  endMatch() { if (this.touchPad) this.touchPad.release(); this.hud = null; this.tagsEl.innerHTML = ''; this.tagMap = new Map(); }
 
   pauseMenu(onResume, onQuit, isHost, online) {
     return this.modal(`<h2>Paused</h2>${online ? '<p style="color:var(--muted);margin:0">The kitchen keeps cooking while you are in this menu.</p>' : ''}

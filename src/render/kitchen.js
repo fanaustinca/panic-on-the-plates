@@ -1,6 +1,7 @@
 // Kitchen renderer: static tiles/stations from the level, plus per-frame dynamic state (items,
 // fires, progress bars, moving floes/walls/bridges, hazards, monkeys).
 import * as THREE from 'three';
+import { CPU2D } from './geo.js';
 import { T, INGREDIENTS, WORLDS } from '../config.js';
 import { tileAt } from '../levels.js';
 import { handAngle, handWarn, floeAt, cycle, shiftUp, shiftWarn, bridgeOff, bridgeWarn, strikesNear, holeAt, HOLE_TIME, cuckooAt, envAt, WARN, moverX, moverWarn } from '../hazards.js';
@@ -1422,7 +1423,7 @@ const texCache = {};
 function canvasT(key, w, h, draw) {
   if (texCache[key]) return texCache[key];
   const c = document.createElement('canvas'); c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  draw(c.getContext('2d', CPU2D), w, h);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return (texCache[key] = t);
 }

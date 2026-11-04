@@ -2,11 +2,11 @@
 import * as THREE from 'three';
 import './style.css';
 import { WORLDS, MAX_PLAYERS, OUTFITS, COLORS, SKINS, cleanUpg, finalState } from './config.js';
-import { MP_LEVEL } from './levels.js';
+import { MP_LEVEL, buildLevel } from './levels.js';
 import { Room, isLocalNet } from './net.js';
 import { Game } from './game.js';
 import { UI } from './ui.js';
-import { Input, ctrlLabel } from './input.js';
+import { Input, ctrlLabel, touchUI } from './input.js';
 import { LobbyScene } from './render/lobby3d.js';
 import { installDev } from './dev.js';
 import { loadSave, writeSave, recordResult, levelUnlocked, outfitUnlocked, openBox, skipLevel } from './save.js';
@@ -39,6 +39,18 @@ class App {
     this.applySettings();
     this.resize();
     addEventListener('resize', () => this.resize());
+    // phones report the new size a beat after turning
+    addEventListener('orientationchange', () => setTimeout(() => this.resize(), 250));
+    if (window.visualViewport) visualViewport.addEventListener('resize', () => this.resize());
+    // on-screen controls appear with the first touch and step aside when a keyboard is used
+    const setTouch = (on) => { if (touchUI.on === on) return; touchUI.on = on; document.body.classList.toggle('touch', on); if (this.game) this.game.fit(); if (this.mode === 'lobby') this.ui.renderLobby(); };
+    document.body.classList.toggle('touch', touchUI.on);
+    addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') setTouch(true); }, true);
+    addEventListener('keydown', (e) => { if (!e.repeat && /^(Key[WASDEQ]|Arrow|Space|Enter)/.test(e.code) && !(e.target && e.target.tagName === 'INPUT')) setTouch(false); }, true);
+    // a solo round stops while the tab is hidden or the window loses focus (nobody else is cooking)
+    const autoPause = () => { if (new URLSearchParams(location.search).has('test')) return; if (this.game && !this.room && !this.game.paused && !this.game.ended && this.game.sim.phase !== 'over') this.togglePause(); };
+    addEventListener('blur', autoPause);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); });
     const unlock = () => { initAudio(); setVolumes(this.save.settings.sfx, this.save.settings.music); if (!this.musicOn) { this.musicOn = true; if (this.mode !== 'game') playMusic('lobby', 112); } };
     addEventListener('pointerdown', unlock); addEventListener('keydown', unlock);
     this.showTitle();
@@ -77,7 +89,7 @@ class App {
 
   // ------------------------------------------------------------ couch co-op (more cooks on this machine)
   /** controller for your own cook: the whole keyboard, or its left half once someone takes the arrows; plus any free gamepad */
-  selfCtrl() { return this.couch.some((c) => c.local === 'kb2') ? 'kb1|free' : 'kb|free'; }
+  selfCtrl() { return this.couch.some((c) => c.local === 'kb2') ? 'kb1|free|touch' : 'kb|free|touch'; }
   addLocal(ctrl) {
     if (this.room || this.mode !== 'lobby') { this.ui.toast('Couch co-op is for solo kitchens: leave the room first'); return false; }
     if (this.members.size >= MAX_PLAYERS) { this.ui.toast('The kitchen is full (4 cooks)'); return false; }
@@ -119,6 +131,14 @@ class App {
 
   resize() {
     const s = this.save.settings.quality;
+    if (innerWidth === this.lastW && innerHeight === this.lastH && s === this.lastQ) return;
+    this.lastW = innerWidth; this.lastH = innerHeight; this.lastQ = s;
+    // menus are laid out for at least 1000x600 and zoomed to fit; big screens grow them a little
+    let mz = Math.min(innerWidth / 1000, innerHeight / 600);
+    if (mz > 1) mz = Math.max(1, Math.min(1.2, innerWidth / 1500, innerHeight / 860));
+    document.documentElement.style.setProperty('--mz', mz.toFixed(3));
+    // a phone turned upright mid-round pauses a solo kitchen behind the "turn sideways" card
+    if (touchUI.on && innerHeight > innerWidth && innerWidth <= 600 && this.game && !this.room && !this.game.paused) this.togglePause();
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, s === 'high' ? 2 : s === 'medium' ? 1.5 : 1));
     this.renderer.setSize(innerWidth, innerHeight, false);
     this.lobby3d.fit();
@@ -349,13 +369,13 @@ class App {
     this.game = new Game({
       renderer: this.renderer, room: this.room, selfId: this.selfId, isHost: this.isHost, roster, level, seed,
       hud: this.ui, input: this.input, quality: this.save.settings.quality,
-      locals: [{ id: this.selfId, ctrl: this.room ? 'kb|free' : this.selfCtrl() }, ...(this.room ? [] : this.couch.filter((c) => roster.some((r) => r.id === c.id)).map((c) => ({ id: c.id, ctrl: c.local })))],
+      locals: [{ id: this.selfId, ctrl: this.room ? 'kb|free|touch' : this.selfCtrl() }, ...(this.room ? [] : this.couch.filter((c) => roster.some((r) => r.id === c.id)).map((c) => ({ id: c.id, ctrl: c.local })))],
       onEnd: (res) => {
         if (this.isHost) { if (this.room) this.room.broadcast({ k: 'end', res }); this.showResults(res); }
       },
     });
     window.PANIC.game = this.game;
-    if (!this.save.seen11) { this.save.seen11 = true; writeSave(this.save); setTimeout(() => this.ui.toast('New: <b>Shift</b> dashes, <b>Q</b> throws food to a teammate, onto a counter or into its pan. Watch for golden orders!'), 4200); }
+    if (!this.save.seen11) { this.save.seen11 = true; writeSave(this.save); setTimeout(() => this.ui.toast(touchUI.on ? 'New: <b>Dash</b> for speed, <b>Throw</b> food to a teammate, onto a counter or into its pan. Watch for golden orders!' : 'New: <b>Shift</b> dashes, <b>Q</b> throws food to a teammate, onto a counter or into its pan. Watch for golden orders!'), 4200); }
   }
 
   showResults(res) {
@@ -415,4 +435,6 @@ class App {
 const app = new App();
 // test / debug hooks
 window.PANIC = { app, ready: true, local: isLocalNet(), game: null, finalState };
+// layout checks: one level per distinct kitchen footprint in each world
+window.PANIC.layoutLevels = () => { const seen = new Set(), out = []; for (let w = 0; w < 8; w++) for (let l = 0; l <= MP_LEVEL; l++) { const L = buildLevel(w, l), k = `${w}:${L.W}x${L.H}`; if (!seen.has(k)) { seen.add(k); out.push(`${w}-${l}`); } } return out; };
 window.dev = installDev(app);
